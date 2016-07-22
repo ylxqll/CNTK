@@ -17,12 +17,13 @@ void TrainSequenceToSequenceTranslator();
 
 int main()
 {
-    NDArrayViewTests();
-    TensorTests();
-    FunctionTests();
+
+    // NDArrayViewTests();
+    // TensorTests();
+    // FunctionTests();
 
     FeedForwardTests();
-    RecurrentFunctionTests();
+    // RecurrentFunctionTests();
 
     TrainerTests();
     SerializationTests();
