@@ -1,6 +1,7 @@
 #include "CNTKLibrary.h"
 #include <functional>
 #include <thread>
+#include <mutex>
 #include <iostream>
 #include "Common.h"
 
@@ -108,8 +109,8 @@ void TestFeedForwardNetworkCreation(const DeviceDescriptor& device, bool testSav
 #endif 
 
     }
-}
 
+}
 
 FunctionPtr FullyConnectedDNNLayerWithSharedParameters(Variable input,
                                                        const Parameter& timesParam,
@@ -147,7 +148,13 @@ FunctionPtr FullyConnectedFeedForwardClassifierNetWithSharedParameters(Variable 
     return classifierRoot;
 }
 
-void Evaluation(size_t inputDim,
+const size_t threadCount = 3;
+// std::atomic<int> runningThreads;
+int runningThreads;
+std::atomic<bool> ready(false);
+std::mutex counter_mutex;
+
+void EvaluationWithSharedParameters(size_t inputDim,
                 size_t numOutputClasses,
                 size_t numHiddenLayers,
                 const Parameter& inputTimesParam,
@@ -158,6 +165,12 @@ void Evaluation(size_t inputDim,
                 const DeviceDescriptor& computeDevice)
 {
     using namespace std::placeholders;
+
+    // wait for ready signal
+    while (!ready)
+    {
+        std::this_thread::yield();
+    }
 
     Variable inputVar({inputDim}, DataType::Float, L"Features");
     auto classifierOutputFunction = FullyConnectedFeedForwardClassifierNetWithSharedParameters(inputVar,
@@ -176,9 +189,6 @@ void Evaluation(size_t inputDim,
     auto ffNet = CNTK::Combine({trainingLossFunction, predictionFunction, classifierOutputFunction}, L"ClassifierModel");
 
     // Now test the structure
-    
-    fprintf(stderr, "Parameters Count: %d, Arguments Count: %d, Output Count:%d\n", ffNet->Parameters().size(), ffNet->Arguments().size(), ffNet->Outputs().size());
-
     if (ffNet->Parameters().size() != ((numHiddenLayers * 2) + 1))
         throw std::runtime_error("TestFeedForwardNetworkCreation: Function does not have expected Parameter count");
 
@@ -215,12 +225,35 @@ void Evaluation(size_t inputDim,
 
         ffNet->Forward(arguments, outputs, computeDevice);        
     }
+
+    counter_mutex.lock();
+    runningThreads++;
+    fprintf(stderr, "Complete evaluation. RunningThreads=%d...\n", runningThreads);
+    fflush(stderr);
+    counter_mutex.unlock();
+    // keep the thread active until all are done.
+    while ( true )
+    {
+        counter_mutex.lock();
+        if (runningThreads < threadCount)
+        {
+            /*fprintf(stderr, "runningThreads=%d\n", runningThreads);
+            fflush(stderr);*/
+            counter_mutex.unlock();
+            std::this_thread::yield();
+        }
+        else
+        {
+            fprintf(stderr, "all threads completed\n", runningThreads);
+            fflush(stderr);
+            counter_mutex.unlock();
+            break;
+        }
+    }
 }
 
 void TestFeedForwardMultiThread(const DeviceDescriptor& device)
 {
-    const size_t threadCount = 3;
-
     const size_t inputDim = 937;
     const size_t numOutputClasses = 9304;
     const size_t numHiddenLayers = 6;
@@ -246,16 +279,22 @@ void TestFeedForwardMultiThread(const DeviceDescriptor& device)
     auto outputTimesParam = Parameter(NDArrayView::RandomUniform<float>({numOutputClasses, hiddenLayersDim}, -0.5, 0.5, 1, device));
 
     // Run evaluation in parallel    
-    std::thread threadList[threadCount];    
+    std::thread threadList[threadCount];   
+    runningThreads = 0;
     for (size_t t = 0; t < threadCount; ++t)
     {
-        threadList[t] = std::thread(Evaluation, inputDim, numOutputClasses, numHiddenLayers, inputTimesParam, inputPlusParam, hiddenLayerTimesParam, hiddenLayerPlusParam, outputTimesParam, device);
+        threadList[t] = std::thread(EvaluationWithSharedParameters, inputDim, numOutputClasses, numHiddenLayers, inputTimesParam, inputPlusParam, hiddenLayerTimesParam, hiddenLayerPlusParam, outputTimesParam, device);
+       /* fprintf(stderr, "Thread %d created.\n", t);
+        fflush(stderr);*/
         // Evaluation(inputDim, numOutputClasses, numHiddenLayers, inputTimesParam, inputPlusParam, hiddenLayerTimesParam, hiddenLayerPlusParam, outputTimesParam, device);
-    } 
+    }
+    ready = true;
 
-    for (size_t t = 0; t < threadCount; ++t)
+    for (size_t tt = 0; tt < threadCount; ++tt)
     {
-        threadList[t].join();
+        threadList[tt].join();
+        fprintf(stderr, "thread %d joined.\n", tt);
+        fflush(stderr);
     }    
 }
 
