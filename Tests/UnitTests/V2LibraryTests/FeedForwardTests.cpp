@@ -117,7 +117,7 @@ FunctionPtr FullyConnectedDNNLayerWithSharedParameters(Variable input,
                                                        const Parameter& plusParam,
                                                        const std::function<FunctionPtr(const FunctionPtr&)>& nonLinearity)
 {
-    assert(input.Shape().NumAxes() == 1);   
+    assert(input.Shape().Rank() == 1);
         
     // Todo: assume that timesParam has matched outputDim and inputDim 
     auto timesFunction = Times(timesParam, input);
@@ -172,7 +172,7 @@ void EvaluationWithSharedParameters(size_t inputDim,
         std::this_thread::yield();
     }
 
-    Variable inputVar({inputDim}, DataType::Float, L"Features");
+    auto inputVar = InputVariable({inputDim}, DataType::Float, L"Features");
     auto classifierOutputFunction = FullyConnectedFeedForwardClassifierNetWithSharedParameters(inputVar,
                                                                                                numHiddenLayers,
                                                                                                inputTimesParam,
@@ -182,7 +182,7 @@ void EvaluationWithSharedParameters(size_t inputDim,
                                                                                                outputTimesParam,
                                                                                                std::bind(Sigmoid, _1, L""));
 
-    Variable labelsVar({numOutputClasses}, DataType::Float, L"Labels");
+    auto labelsVar = InputVariable({numOutputClasses}, DataType::Float, L"Labels");
     auto trainingLossFunction = CNTK::CrossEntropyWithSoftmax(classifierOutputFunction, labelsVar, L"LossFunction");
     auto predictionFunction = CNTK::ClassificationError(classifierOutputFunction, labelsVar, L"ClassificationError");
 
@@ -221,9 +221,7 @@ void EvaluationWithSharedParameters(size_t inputDim,
 
         ValuePtr outputValue, predictionErrorValue;
         std::unordered_map<Variable, ValuePtr> outputs = {{classifierOutputFunction->Output(), outputValue}, {predictionFunction->Output(), predictionErrorValue}};
-        std::unordered_map<Variable, const ValuePtr> arguments = {{inputVar, inputValue}, {labelsVar, labelValue}};
-
-        ffNet->Forward(arguments, outputs, computeDevice);        
+        ffNet->Forward({{inputVar, inputValue}, {labelsVar, labelValue}}, outputs, computeDevice);
     }
 
     counter_mutex.lock();
@@ -442,7 +440,7 @@ void TestTimesAndPlus(size_t inputDim,
 void FeedForwardTests()
 {
 
-#if 0
+#if 1
 
     TestTimesAndPlus<double>(4, 2, 5, DeviceDescriptor::CPUDevice(), 3, true, true, true);
 #ifndef CPUONLY
@@ -455,7 +453,8 @@ void FeedForwardTests()
 
     fprintf(stderr, "\nTest single threaded eval\n");
     fflush(stderr);
-    TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice());
+    // not testing SaveAndReload for now.
+    TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice(), false);
 
     // TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice(), false);
     // TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice(), true);
