@@ -148,7 +148,7 @@ FunctionPtr FullyConnectedFeedForwardClassifierNetWithSharedParameters(Variable 
     return classifierRoot;
 }
 
-const size_t threadCount = 3;
+const size_t threadCount = 10;
 // std::atomic<int> runningThreads;
 int runningThreads;
 std::atomic<bool> ready(false);
@@ -440,7 +440,7 @@ void TestTimesAndPlus(size_t inputDim,
 void FeedForwardTests()
 {
 
-#if 1
+#if 0
 
     TestTimesAndPlus<double>(4, 2, 5, DeviceDescriptor::CPUDevice(), 3, true, true, true);
 #ifndef CPUONLY
