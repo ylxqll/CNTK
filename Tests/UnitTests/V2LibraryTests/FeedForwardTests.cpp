@@ -148,7 +148,7 @@ FunctionPtr FullyConnectedFeedForwardClassifierNetWithSharedParameters(Variable 
     return classifierRoot;
 }
 
-const size_t threadCount = 10;
+const size_t threadCount = 2;
 // std::atomic<int> runningThreads;
 int runningThreads;
 std::atomic<bool> ready(false);
