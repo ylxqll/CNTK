@@ -45,10 +45,10 @@ decodeOutputPath = "$decodeModelPath$.$beamDepth$" # results are written next to
 dumpModelPath = "$modelPath$.2" # put the epoch id here
 
 # top-level model configuration
-hiddenDim = 128 
+hiddenDim = 512
 precision  = "float"
-maxLayer = 0
-isBidirectional = false
+maxLayer = 2
+isBidirectional = true
 
 # vocab
 inputVocabSize = 69     # shared vocab (even though they are separate)
@@ -286,8 +286,8 @@ train = {
         maxEpochs = 50
         numMBsToShowResult = 100
         firstMBsToShowResult = 10
-        gradUpdateType = "none" # TODO: Try FSAdaGrad?
-        loadBestModel = false   # true # broken for some models (rereading overwrites something that got set by validation)
+        gradUpdateType = FSAdaGrad # TODO: Try FSAdaGrad?
+        loadBestModel = false      # true # broken for some models (rereading overwrites something that got set by validation)
 
         dropoutRate = 0.0
 
@@ -376,7 +376,7 @@ write = {
         labelMappingFile = "$DataDir$/$mappingFile$"
     }
 
-    minibatchSize = 8192                # choose this to be big enough for the longest sentence
+    minibatchSize = 1024                # choose this to be big enough for the longest sentence
     traceLevel = 1
     epochSize = 0
 
