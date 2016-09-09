@@ -44,7 +44,7 @@ void TestFeedForwardNetworkCreation(const DeviceDescriptor& device, bool testSav
 
     auto ffNet = CNTK::Combine({ trainingLoss, prediction, classifierOutput }, L"ClassifierModel");
 
-    fprintf(stderr, "Parameters Count: %u, Arguments Count: %u, Output Count:%u\n", ffNet->Parameters().size(), ffNet->Arguments().size(), ffNet->Outputs().size());
+    fprintf(stderr, "Parameters Count: %lu, Arguments Count: %lu, Output Count:%lu\n", ffNet->Parameters().size(), ffNet->Arguments().size(), ffNet->Outputs().size());
 
     // Now test the structure
     if (ffNet->Parameters().size() != ((numHiddenLayers * 2) + 1))
@@ -291,7 +291,7 @@ void TestFeedForwardMultiThread(const DeviceDescriptor& device)
     for (size_t tt = 0; tt < threadCount; ++tt)
     {
         threadList[tt].join();
-        fprintf(stderr, "thread %u joined.\n", tt);
+        fprintf(stderr, "thread %lu joined.\n", tt);
         fflush(stderr);
     }    
 }
