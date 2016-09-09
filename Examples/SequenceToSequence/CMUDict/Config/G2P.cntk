@@ -67,7 +67,7 @@ testFile    = "cmudict-0.7b.test.ctf"
 mappingFile = "cmudict-0.7b.mapping"
 
 # some reader variables that occur multiple times
-cntkReaderInputDef = [ rawInput = [ alias = "S0" ; dim = $inputVocabSize$ ; format = "sparse" ] ; rawLabels = [ alias = "S1" ;  dim = $labelVocabSize$ ;  format = "sparse" ] ]
+cntkReaderInputDef = { rawInput = { alias = "S0" ; dim = $inputVocabSize$ ; format = "sparse" } ; rawLabels = { alias = "S1" ;  dim = $labelVocabSize$ ;  format = "sparse" } }
 
 #######################################
 #  network definition                 #
@@ -151,17 +151,17 @@ BrainScriptNetworkBuilder = (new ComputationNetwork {
     # get the final encoder state for use as the initial state (not used with attention model)
     # Since we run right-to-left, the final state is the first, not the last.
     # For beam decoding, we will also inject a second dimension.
-    thoughtVector = [
+    thoughtVector = {
         h = ReshapeDimension (BS.Sequences.First (encoderOutput.h), 1, (dim:1))
         c = ReshapeDimension (BS.Sequences.First (encoderOutput.c), 1, (dim:1))
         dim = encoderOutput.dim
-    ]
+    }
 
-    thoughtVectorBroadcast = [ # broadcast to all time steps of the target sequence
+    thoughtVectorBroadcast = { # broadcast to all time steps of the target sequence
         h = BS.Sequences.BroadcastSequenceAs (labelsEmbedded, thoughtVector.h)
         c = BS.Sequences.BroadcastSequenceAs (labelsEmbedded, thoughtVector.c)
         dim = thoughtVector.dim
-    ]
+    }
 
     #############################################################
     # decoder reordering hook: propagation of beam hypotheses
@@ -176,20 +176,20 @@ BrainScriptNetworkBuilder = (new ComputationNetwork {
 
     # helper functions to delay h and c that apply beam-search reordering, if so configured
 
-    PreviousHCWithReorderingHook (lstmState, layerIndex=0) = [
+    PreviousHCWithReorderingHook (lstmState, layerIndex=0) = {
        h = BS.Loop.Previous (lstmState.h * beamSearchReorderHook)             // hidden state(t-1)
        c = BS.Loop.Previous (lstmState.c * beamSearchReorderHook)             // cell(t-1)
        dim = lstmState.dim
-    ]
+    }
 
     PreviousHCFromThoughtVectorWithReorderingHook (lstmState, layerIndex=0) =
         if layerIndex > 0 then PreviousHCWithReorderingHook (lstmState, layerIndex=1)
-        else [ # with both thought vector and beam-search hook
+        else { # with both thought vector and beam-search hook
             isFirst = BS.Loop.IsFirst (labelsEmbedded)
             h = BS.Boolean.If (isFirst, thoughtVectorBroadcast.h, BS.Loop.Previous (lstmState.h * beamSearchReorderHook))
             c = BS.Boolean.If (isFirst, thoughtVectorBroadcast.c, BS.Loop.Previous (lstmState.c * beamSearchReorderHook))
             dim = lstmState.dim
-        ]
+        }
 
     #############################################################
     # decoder history hook: LM history, from ground truth vs. output
@@ -220,23 +220,23 @@ BrainScriptNetworkBuilder = (new ComputationNetwork {
     # some parameters to the decoder stack depend on the mode
     decoderParams =
         # with attention
-        if useEncoder && attentionSpan > 0 then [
+        if useEncoder && attentionSpan > 0 then {
             previousHook = PreviousHCWithReorderingHook # add reordering for beam search
             augmentInputHook = FixedWindowAttentionHook # input gets augmented by the attention window
             augmentInputDim = encoderOutput.dim
-        ]
+        }
         # with thought vector appended to every frame
-        else if useEncoder && useNYUStyle then [
+        else if useEncoder && useNYUStyle then {
             previousHook = PreviousHCWithReorderingHook
             augmentInputHook (input, lstmState) = S(thoughtVectorBroadcast.h) # each input frame gets augmented by the thought vector
             augmentInputDim = thoughtVector.dim
-        ]
+        }
         # thought vector as initial state for decoder
-        else [
+        else {
             previousHook = PreviousHCFromThoughtVectorWithReorderingHook # Previous() function with thought vector as initial state
             augmentInputHook = BS.RNNs.NoAuxInputHook
             augmentInputDim = 0
-        ]
+        }
 
     # this is the decoder LSTM stack
     decoder = BS.RNNs.RecurrentLSTMPStack (decoderDims, cellDims=decoderDims,
