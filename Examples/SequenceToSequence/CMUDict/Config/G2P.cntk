@@ -50,13 +50,9 @@ precision  = "float"
 maxLayer = 0
 isBidirectional = false
 
-# set up reader
-readerType = "CNTKTextFormatReader"
+# vocab
 inputVocabSize = 69     # shared vocab (even though they are separate)
 labelVocabSize = 69     
-mbSizes = 48            # new reader is based on max(stream lengths) instead of sum(stream lengths)
-learningRatesPerSample = 0.01
-skipSequenceIds = "false"
 
 # corpus
 maxLength = 20           # 0 disables attention
@@ -282,8 +278,8 @@ train = {
     # BrainScriptNetworkBuilder is defined in outer scope
 
     SGD = {
-        minibatchSize = $mbSizes$
-        learningRatesPerSample = $learningRatesPerSample$
+        minibatchSize = 48
+        learningRatesPerSample = 0.01
         momentumAsTimeConstant = 1100
         gradientClippingWithTruncation = true   # (as opposed to clipping the Frobenius norm of the matrix)
         clippingThresholdPerSample = 2.3   # visibly impacts objectives, but not final result, so keep it for safety
@@ -311,17 +307,22 @@ train = {
 
     # reader definitions
     reader = {
-        file = "$DataDir$/$trainFile$"
-
-        chunkSizeInBytes = 30000000         # large enough for entire data set
-        input = $cntkReaderInputDef$
+        randomize = true
+        deserializers = ({
+            type = "CNTKTextFormatDeserializer" ; module = "CNTKTextFormatReader"
+            file = "$DataDir$/$trainFile$"
+            input = $cntkReaderInputDef$
+        })
 
     }
 
-    cvReader = {
-        file = "$DataDir$/$validFile$"
-        randomize = "none"
-        input = $cntkReaderInputDef$
+    cvreader = {
+        randomize = false
+        deserializers = ({
+            type = "CNTKTextFormatDeserializer" ; module = "CNTKTextFormatReader"
+            file = "$DataDir$/$validFile$"
+            input = $cntkReaderInputDef$
+        })
 
     }
 }
@@ -380,9 +381,12 @@ write = {
     epochSize = 0
 
     reader = {
-        file = "$DataDir$/$testFile$"
-        randomize = "none"
-        input = $cntkReaderInputDef$
+        randomize = false
+        deserializers = ({
+            type = "CNTKTextFormatDeserializer" ; module = "CNTKTextFormatReader"
+            file = "$DataDir$/$testFile$"
+            input = $cntkReaderInputDef$
+        })
 
     }
 }
