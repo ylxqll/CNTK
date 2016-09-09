@@ -56,6 +56,7 @@ inputVocabSize = 69     # shared vocab (even though they are separate)
 labelVocabSize = 69     
 mbSizes = 48            # new reader is based on max(stream lengths) instead of sum(stream lengths)
 learningRatesPerSample = 0.01
+skipSequenceIds = "false"
 
 # corpus
 maxLength = 20           # 0 disables attention
@@ -310,25 +311,16 @@ train = {
 
     # reader definitions
     reader = {
-        readerType = "$readerType$"
         file = "$DataDir$/$trainFile$"
 
-        # specific to CNTKTextFormatReader
-        skipSequenceIds = "false"
-        traceLevel = 0
         chunkSizeInBytes = 30000000         # large enough for entire data set
         input = $cntkReaderInputDef$
 
     }
 
     cvReader = {
-        readerType = "$readerType$"
         file = "$DataDir$/$validFile$"
         randomize = "none"
-
-        # specific to CNTKTextFormatReader
-        skipSequenceIds = "false"
-        traceLevel = 0
         input = $cntkReaderInputDef$
 
     }
@@ -388,13 +380,8 @@ write = {
     epochSize = 0
 
     reader = {
-        readerType = "$readerType$"
         file = "$DataDir$/$testFile$"
         randomize = "none"
-
-        # specific to CNTKTextFormatReader
-        skipSequenceIds = "false"
-        traceLevel = 0
         input = $cntkReaderInputDef$
 
     }
