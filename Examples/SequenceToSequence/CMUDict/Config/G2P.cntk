@@ -313,11 +313,9 @@ train = [
     reader = [
         readerType = "$readerType$"
         file = "$DataDir$/$trainFile$"
-        randomize = "true"
 
         # specific to CNTKTextFormatReader
         skipSequenceIds = "false"
-        maxErrors = 100
         traceLevel = 0
         chunkSizeInBytes = 30000000         # large enough for entire data set
         input = $cntkReaderInputDef$
@@ -331,7 +329,6 @@ train = [
 
         # specific to CNTKTextFormatReader
         skipSequenceIds = "false"
-        maxErrors = 100
         traceLevel = 0
         input = $cntkReaderInputDef$
 
@@ -398,7 +395,6 @@ write = [
 
         # specific to CNTKTextFormatReader
         skipSequenceIds = "false"
-        maxErrors = 100
         traceLevel = 0
         input = $cntkReaderInputDef$
 
