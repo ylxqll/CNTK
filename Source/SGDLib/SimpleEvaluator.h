@@ -257,6 +257,19 @@ public:
         return evalResults;
     }
 
+    // This function is used for evaluating the mean and variance of all batch normalization nodes after training. 
+    // Details will link to the wiki https://github.com/Microsoft/CNTK/wiki/Post-Batch-Normalization-Statistics
+    // The reason why put it into evalute is the action take place after trainning and non-backprop processing, which makes me believe 
+    // this function is like a kind of evaluate function.
+    // In this function,  
+    // 1. since all other weights are fix except the un-pbn nodes, I set the networkoperationMode into inferring.
+    // 2. The next thing is to load the network model and data source, I follow the Evaluate function to do so, however, I delete something 
+    //      seem useless, like error statistics etc.
+    // 3. Finding the BN nodes in the network and put them into a vector with evaluate order (This links the nestedNode vector I got in 
+    //      ControlFlowNetwork)
+    // 4. From node to node in the BN vector to generate the mean and various (This links to the changes of BatchNormalizationNode 
+    //      in TrainingNodes.h, since I need to make the nodes "learn" mean and variance in inferring mode)
+    // 5. Consider the multi-GPU, we need to sync up the BN results between all the worker and average the value.
     void EvaluateBN(IDataReader* dataReader, const vector<wstring>& evalNodeNames, const wstring exportPath, const size_t mbSize, const int iters = 240, const size_t testSize = requestDataSize)
     {
         ScopedNetworkOperationMode modeGuard(m_net, NetworkOperationMode::inferring);

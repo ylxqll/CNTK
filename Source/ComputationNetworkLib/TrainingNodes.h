@@ -2025,6 +2025,11 @@ public:
     double Epsilon() const { return m_epsilon; }
     bool UseCNTKEngine() const { return m_useCntkEngine; }
 
+    // The function will reset the sample seen of current node and enable update mean and variance even in 
+    // inferring mode. By setting normTimeConst to -1 enable running average statistics. And by setting 
+    // blendTimeConst to 0 disable blending.
+    // Be caution: original mean and variance will be erase in later forward prop since samplesSeen has been 
+    // reset.
     void SetPostBatchNormalizationBegin()
     {
         m_postBatchNormalization = true;
@@ -2034,6 +2039,7 @@ public:
         m_normTimeConst = -1;
         m_blendTimeConst = 0;
     }
+    // The function will be called while the new mean and variance have been updated.
     void SetPostBatchNormalizationEnd()
     {
         m_postBatchNormalization = false;
@@ -2104,7 +2110,8 @@ private:
 
     std::unique_ptr<BatchNormEngine<ElemType>> m_bnEng;
 
-    // post batch normalization process mark
+    // By setting m_postBatchNormalization to true, it will still update the mean and variance in the environment of 
+    // NetworkOperationMode::Inferring. Used by PBN command, which will update the mean and variance in inferring mode.
     bool m_postBatchNormalization;
 
     double m_swapNormTimeConst;

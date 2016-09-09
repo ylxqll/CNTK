@@ -875,10 +875,14 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
     EpochCriterion         epochCriterionLastLogged  = epochCriterion;
     vector<EpochCriterion> epochEvalErrorsLastLogged = epochEvalErrors;
 
-    // Now, we need to use a switch to enable/disable wk in BatchNormalization.
-    // If we can determine whether wk added or not for each node, then, discard this
+    // NOTE: For ResNet, the L2 regularization in BatchNormalization should be disable.
+    // Here, we use a static-pointer-cast to determine which node is batch nomralization and add the ref of its scale and 
+    // shift into an unordered_map. Then, the map will be called in SGD updater to whether apply L2 regularization or not
+    // NOTE: If the L1 or L2 regularization could be controlled by an individual node, this code snippet will discard
+    // BUGBUG: The code default using input[0] and input[1] as scale and shift, will they change someone?
     std::unordered_set<ComputationNodeBasePtr> batchNormalizationWeights;
-    if (m_disableWkInBatchNormal) {
+    if (m_disableL2RegBatchNormal) 
+    {
         for (auto& evalNode : evaluationNodes) 
         {
             shared_ptr<FlowControlNode> nestedNetwork = static_pointer_cast<FlowControlNode>(net->GetNestedNetwork(evalNode));
@@ -2475,7 +2479,7 @@ SGDParams::SGDParams(const ConfigRecordType& configSGD, size_t sizeofElemType)
     m_seqGammarCalcbMMIFactor = configSGD(L"seqGammarBMMIFactor", 0.0);
     m_seqGammarCalcWP = configSGD(L"seqGammarWordPen", 0.0);
     
-    m_disableWkInBatchNormal = configSGD(L"disableWkInBatchNormal", false);
+    m_disableL2RegBatchNormal = configSGD(L"disableWkInBatchNormal", false);
 
     m_dropoutRates = configSGD(L"dropoutRate", ConfigRecordType::Array(doubleargvector(vector<double>{0.0})));
     m_batchNormalizationTimeConstant = configSGD(L"batchNormalizationTimeConstant", ConfigRecordType::Array(doubleargvector(vector<double>{0})));

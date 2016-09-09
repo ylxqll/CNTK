@@ -131,14 +131,13 @@ public:
     // -----------------------------------------------------------------------
 
     // main entry point for forward prop
-    void ForwardProp(const ComputationNodeBasePtr rootNode);
+    // If pass the startNode non-null, the forward will not call forwardProp utill finding the startNode along rootNode eval order. 
+    // If pass the endNode non-null, the forward will exit after executing endNode forwardProp.
+    void ForwardProp(const ComputationNodeBasePtr rootNode, const ComputationNodeBasePtr startNode = nullptr,
+        const ComputationNodeBasePtr endNode = nullptr);
 
     // main entry point for backprop
     void Backprop(const ComputationNodeBasePtr rootNode);
-
-    // partial forward entry
-    void ForwardProp(const ComputationNodeBasePtr rootNode, const ComputationNodeBasePtr startNode, 
-	    const ComputationNodeBasePtr endNode);
 
     template <class NODESET> // version that takes multiple nodes
     void ForwardProp(const NODESET& nodes)
@@ -1014,11 +1013,11 @@ protected:
         virtual const std::wstring OperationName() const override
         {
             return L"PARTraversalFlowControlNode";
-        }
+        } 
         virtual void BeginForwardProp() override
         {
         }
-        virtual void ForwardProp(const FrameRange&) override;
+        virtual void ForwardProp(const FrameRange&, const ComputationNodeBasePtr&, const ComputationNodeBasePtr&) override;
         virtual void EndForwardProp() override
         {
         }
@@ -1038,8 +1037,6 @@ protected:
         virtual void AllocateGradientMatricesForInputs(MatrixPool& matrixPool);
         virtual void RequestMatricesBeforeBackprop(MatrixPool& matrixPool);
         virtual void ReleaseMatricesAfterBackprop(MatrixPool& matrixPool);
-        
-        virtual void ForwardProp(const FrameRange&, const ComputationNodeBasePtr, const ComputationNodeBasePtr) override;
 
     public:
         // this special constructor constructs the top-level network node
