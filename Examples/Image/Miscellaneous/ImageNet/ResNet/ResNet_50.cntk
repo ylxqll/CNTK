@@ -1,0 +1,126 @@
+# Node: This sample uses the BrainScriptBuilder
+#
+
+command = trainNetwork
+
+precision = "float"; traceLevel = 1 ; deviceId = "auto"
+
+rootDir = "." ; configDir = "$RootDir$" ; dataDir = "$RootDir$" ;
+outputDir = "$rootDir$/Output" ;
+
+modelPath = "$outputDir$/Models/ResNet_50"
+stderr = "$outputDir$/ResNet_50_BS_out"
+
+numMBsToShowResult=500
+
+# TRAINING CONFIG
+trainNetwork = {
+    action = "train"
+
+    BrainScriptNetworkBuilder = {
+        include "$configDir$/Macros.bs"
+
+        imageShape = 224 : 224 : 3          # image dimensions
+        labelDim = 1000                     # number of distinct labels
+
+        cMap1 = 64
+        cMap2 = 128
+        cMap3 = 256
+        cMap4 = 512
+        cMap5 = 1024
+        cMap6 = 2048
+
+        model (features) = {
+            # conv1 and max pooling
+            conv1 = ConvBNReLULayer {cMap1, 7, 2} (features)
+            pool1 = MaxPoolingLayer {(3: 3), stride = 2, pad = true} (conv1)
+
+            # conv2_x
+            conv2_1 = ResNetBottleneck (cMap3, cMap1, pool1)
+            conv2_2 = ResNetBottleneck (cMap3, cMap1, conv2_1)
+            conv2_3 = ResNetBottleneck (cMap3, cMap1, conv2_2)
+
+            # conv3_x
+            conv3_1 = ResNetBottleneckInc (cMap4, cMap2, conv2_3)
+            conv3_2 = ResNetBottleneck (cMap4, cMap2, conv3_1)
+            conv3_3 = ResNetBottleneck (cMap4, cMap2, conv3_2)
+            conv3_4 = ResNetBottleneck (cMap4, cMap2, conv3_3)
+
+            # conv4_x
+            conv4_1 = ResNetBottleneckInc (cMap5, cMap3, conv3_4)
+            conv4_2 = ResNetBottleneck (cMap5, cMap3, conv4_1)
+            conv4_3 = ResNetBottleneck (cMap5, cMap3, conv4_2)
+            conv4_4 = ResNetBottleneck (cMap5, cMap3, conv4_3)
+            conv4_5 = ResNetBottleneck (cMap5, cMap3, conv4_4)
+            conv4_6 = ResNetBottleneck (cMap5, cMap3, conv4_5)
+
+            # conv5_x
+            conv5_1 = ResNetBottleneckInc (cMap6, cMap4, conv4_6)
+            conv5_2 = ResNetBottleneck (cMap6, cMap4, conv5_1)
+            conv5_3 = ResNetBottleneck (cMap6, cMap4, conv5_2)
+
+            # avg pooling
+            pool2 = AveragePoolingLayer {(7: 7), stride = 1} (conv5_3)
+
+            # FC
+            ol = FCLayer (cMap6, labelDim, pool2)
+        }.ol
+
+        # inputs
+        features = Input {imageShape}
+        labels = Input {labelDim}
+
+        # apply model to features
+        ol = model (features)
+
+        # loss and error computation
+        ce = CrossEntropyWithSoftmax (labels, ol)
+        errs = ClassificationError (labels, ol)
+
+        # declare special nodes
+        featureNodes    = (features)
+        labelNodes      = (labels)
+        criterionNodes  = (ce)
+        evaluationNodes = (errs)
+        outputNodes     = (ol)
+    }
+
+    SGD = {
+        epochSize = 0
+        minibatchSize = 256
+        maxEpochs = 125
+        learningRatesPerMB = 1.0*30:0.1*30:0.01*30:0.001
+        momentumPerMB = 0.9
+        gradUpdateType = "None"
+        L2RegWeight = 0.0001
+        dropoutRate = 0
+
+        disableWkInBatchNormal = true
+
+        ParallelTrain = {
+            parallelizationMethod = "DataParallelSGD"
+            distributedMBReading = "true"
+            parallelizationStartEpoch = 1
+            DataParallelSGD = {
+                gradientBits=32
+            }
+        }
+    }
+
+    reader = {
+        randomize = true
+        deserializers = ({
+            type = "ImageDeserializer" ; module = "ImageReader"
+            file = "$DataDir$/train_map.txt"
+            input = {
+                features = { transforms = (
+                    { type = "Crop" ; cropType = "random" ; cropRatio = 0.46666: 0.875 ; jitterType = "uniRatio" } :
+                    { type = "Scale" ; width = 224 ; height = 224 ; channels = 3 ; interpolations = "linear" } :
+                    { type = "Transpose" }
+                    { type = "Mean" ; meanFile="$ConfigDir$/ImageNet1K_mean.xml"}
+                )}
+                labels = { labelDim = 1000 }
+            }
+        })
+    }
+}

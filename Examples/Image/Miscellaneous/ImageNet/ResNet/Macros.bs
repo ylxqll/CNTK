@@ -1,0 +1,49 @@
+# basic components
+ConvLayer {outChannels, kernelSize, strideSize} = Sequential(
+    ConvolutionalLayer {outChannels, (kernelSize: kernelSize), stride = (strideSize:strideSize), pad = true}
+)
+
+BNLayer {} = Sequential(
+    BatchNormalizationLayer {spatialRank = 2, normalizationTimeConstant = 0, useCntkEngine = false}
+)
+
+# assembly components
+## Convolution + Batch Normalization
+ConvBNLayer {outChannels, kernelSize, strideSize} = Sequential{
+    ConvLayer {outChannels, kernelSize, strideSize} :
+    BNLayer{}
+}
+
+## Convolution + Batch Normalization + Rectifier Linear
+ConvBNReLULayer {outChannels, kernelSize, strideSize} = Sequential{
+    ConvBNLayer {outChannels, kernelSize, strideSize} :
+    ReLU
+}
+
+## FC
+FCLayer (hiddenDim, labelDim, input) = {
+    w = ParameterTensor {(labelDim: hiddenDim)}
+    b = ParameterTensor {(labelDim), initValue = 0}
+    t = Times(w, input)
+    z = Plus(t, b)
+}.z
+
+# ResNet components
+ResNetBottleneckInc (outChannels, interOutChannels, input, stride = 2, strideA = 2, strideB = 1) = {
+    # Convolution Layer
+    # 1 * 1 Convolution
+    b1 = ConvBNReLULayer {interOutChannels, 1, strideA} (input)
+    # 3 * 3 Convolution
+    b2 = ConvBNReLULayer {interOutChannels, 3, strideB} (b1)
+    # 1 * 1 Convolution
+    b3 = ConvBNLayer {outChannels, 1, 1} (b2)
+    # Shortcut Layer
+    s = ConvBNLayer {outChannels, 1, stride} (input)
+
+    p = Plus(b3, s)
+    y = ReLU(p)
+}.y
+
+ResNetBottleneck (outChannels, interOutChannels, input) = {
+    y = ResNetBottleneckInc (outChannels, interOutChannels, input, stride = 1, strideA = 1, strideB = 1)
+}.y
