@@ -12,6 +12,7 @@ modelPath = "$outputDir$/Models/ResNet_50"
 stderr = "$outputDir$/ResNet_50_BS_out"
 
 numMBsToShowResult=500
+parallelTrain = "true"
 
 # TRAINING CONFIG
 trainNetwork = {
