@@ -9,16 +9,16 @@ BNLayer {} = Sequential(
 
 # assembly components
 ## Convolution + Batch Normalization
-ConvBNLayer {outChannels, kernelSize, strideSize} = Sequential{
-    ConvLayer {outChannels, kernelSize, strideSize} :
-    BNLayer{}
-}
+ConvBNLayer (input, outChannels, kernelSize, strideSize) = {
+    c = ConvLayer {outChannels, kernelSize, strideSize} (input)
+    y = BNLayer{} (c)
+}.y
 
 ## Convolution + Batch Normalization + Rectifier Linear
-ConvBNReLULayer {outChannels, kernelSize, strideSize} = Sequential{
-    ConvBNLayer {outChannels, kernelSize, strideSize} :
-    ReLU
-}
+ConvBNReLULayer (input, outChannels, kernelSize, strideSize) = {
+    c = ConvBNLayer (input, outChannels, kernelSize, strideSize)
+    y = ReLU (c)
+}.y
 
 ## FC
 FCLayer (hiddenDim, labelDim, input) = {
@@ -32,18 +32,27 @@ FCLayer (hiddenDim, labelDim, input) = {
 ResNetBottleneckInc (outChannels, interOutChannels, input, stride = 2, strideA = 2, strideB = 1) = {
     # Convolution Layer
     # 1 * 1 Convolution
-    b1 = ConvBNReLULayer {interOutChannels, 1, strideA} (input)
+    b1 = ConvBNReLULayer (input, interOutChannels, 1, strideA)
     # 3 * 3 Convolution
-    b2 = ConvBNReLULayer {interOutChannels, 3, strideB} (b1)
+    b2 = ConvBNReLULayer (b1, interOutChannels, 3, strideB)
     # 1 * 1 Convolution
-    b3 = ConvBNLayer {outChannels, 1, 1} (b2)
+    b3 = ConvBNLayer (b2, outChannels, 1, 1)
     # Shortcut Layer
-    s = ConvBNLayer {outChannels, 1, stride} (input)
+    s = ConvBNLayer (input, outChannels, 1, stride)
 
     p = Plus(b3, s)
     y = ReLU(p)
 }.y
 
 ResNetBottleneck (outChannels, interOutChannels, input) = {
-    y = ResNetBottleneckInc (outChannels, interOutChannels, input, stride = 1, strideA = 1, strideB = 1)
+    # Convolution Layer
+    # 1 * 1 Convolution
+    b1 = ConvBNReLULayer (input, interOutChannels, 1, 1)
+    # 3 * 3 Convolution
+    b2 = ConvBNReLULayer (b1, interOutChannels, 3, 1)
+    # 1 * 1 Convolution
+    b3 = ConvBNLayer (b2, outChannels, 1, 1)
+
+    p = Plus(b3, input)
+    y = ReLU(p)
 }.y

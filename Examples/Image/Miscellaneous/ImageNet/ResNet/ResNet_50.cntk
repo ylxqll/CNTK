@@ -32,7 +32,7 @@ trainNetwork = {
 
         model (features) = {
             # conv1 and max pooling
-            conv1 = ConvBNReLULayer {cMap1, 7, 2} (features)
+            conv1 = ConvBNReLULayer (features, cMap1, 7, 2)
             pool1 = MaxPoolingLayer {(3: 3), stride = 2, pad = true} (conv1)
 
             # conv2_x
