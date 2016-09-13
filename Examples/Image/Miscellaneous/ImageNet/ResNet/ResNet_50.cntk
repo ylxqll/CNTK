@@ -11,8 +11,9 @@ outputDir = "$rootDir$/Output" ;
 modelPath = "$outputDir$/Models/ResNet_50"
 stderr = "$outputDir$/ResNet_50_BS_out"
 
-numMBsToShowResult=500
 parallelTrain = "true"
+
+shareNodeValueMatrices = true
 
 # TRAINING CONFIG
 trainNetwork = {
@@ -37,7 +38,7 @@ trainNetwork = {
             pool1 = MaxPoolingLayer {(3: 3), stride = 2, pad = true} (conv1)
 
             # conv2_x
-            conv2_1 = ResNetBottleneck (cMap3, cMap1, pool1)
+            conv2_1 = ResNetBottleneckInc (cMap3, cMap1, pool1, stride = 1, strideA = 1, strideB = 1)
             conv2_2 = ResNetBottleneck (cMap3, cMap1, conv2_1)
             conv2_3 = ResNetBottleneck (cMap3, cMap1, conv2_2)
 
@@ -90,11 +91,12 @@ trainNetwork = {
         epochSize = 0
         minibatchSize = 256
         maxEpochs = 125
-        learningRatesPerMB = 1.0*30:0.1*30:0.01*30:0.001
+        learningRatesPerMB = 1*30:0.1*30:0.01*30:0.001
         momentumPerMB = 0.9
         gradUpdateType = "None"
         L2RegWeight = 0.0001
         dropoutRate = 0
+        numMBsToShowResult = 1
 
         disableWkInBatchNormal = true
 
@@ -109,7 +111,7 @@ trainNetwork = {
     }
 
     reader = {
-        randomize = true
+        verbosity = 0 ; randomize = true
         deserializers = ({
             type = "ImageDeserializer" ; module = "ImageReader"
             file = "$DataDir$/train_map.txt"
