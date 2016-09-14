@@ -1,6 +1,6 @@
 # basic components
 ConvLayer {outChannels, kernelSize, strideSize} = Sequential(
-    ConvolutionalLayer {outChannels, (kernelSize: kernelSize), stride = (strideSize: strideSize), pad = true, bias = false}
+    ConvolutionalLayer {outChannels, (kernelSize: kernelSize), init = "heNormal", stride = (strideSize: strideSize), pad = true, bias = false}
 )
 
 BNLayer {} = Sequential(

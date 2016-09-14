@@ -13,8 +13,6 @@ stderr = "$outputDir$/ResNet_50_BS_out"
 
 parallelTrain = "true"
 
-shareNodeValueMatrices = true
-
 # TRAINING CONFIG
 trainNetwork = {
     action = "train"
@@ -96,7 +94,7 @@ trainNetwork = {
         gradUpdateType = "None"
         L2RegWeight = 0.0001
         dropoutRate = 0
-        numMBsToShowResult = 1
+        numMBsToShowResult = 500
 
         disableWkInBatchNormal = true
 
@@ -110,20 +108,30 @@ trainNetwork = {
         }
     }
 
-    reader = {
-        verbosity = 0 ; randomize = true
-        deserializers = ({
-            type = "ImageDeserializer" ; module = "ImageReader"
-            file = "$DataDir$/train_map.txt"
-            input = {
-                features = { transforms = (
-                    { type = "Crop" ; cropType = "random" ; cropRatio = 0.46666: 0.875 ; jitterType = "uniRatio" } :
-                    { type = "Scale" ; width = 224 ; height = 224 ; channels = 3 ; interpolations = "linear" } :
-                    { type = "Transpose" }
-                    { type = "Mean" ; meanFile="$ConfigDir$/ImageNet1K_mean.xml"}
-                )}
-                labels = { labelDim = 1000 }
-            }
-        })
+    reader={
+        readerType="ImageReader"
+        file="$DataDir$/train_map.txt"
+        randomize="Auto"
+        features={
+            # Below are the required parameters.
+            width=224
+            height=224
+            channels=3
+            # Below are the optional parameters.
+            # Possible values: Center, Random. Default: Center
+            cropType="Random"
+            # Horizontal random flip, will be enabled by default if cropType=Random
+            hflip="true"
+            # Crop scale ratio. Examples: cropRatio=0.9, cropRatio=0.7:0.9. Default: 1.
+            cropRatio=0.46666:0.875
+            # Crop scale ratio jitter type.
+            # Possible values: None, UniRatio, UniLength, UniArea. Default: UniRatio
+            jitterType="UniRatio"
+            # The file stores mean values for each pixel in OpenCV matrix XML format.
+            meanFile="$ConfigDir$/ImageNet1K_mean.xml"
+        }
+        labels={
+            labelDim=1000
+        }
     }
 }
