@@ -50,6 +50,15 @@ namespace Microsoft { namespace MSR { namespace CNTK {
         // Waits on the event that triggeres when all copies have been finished.
         virtual void WaitForCopyCPUToGPU() = 0;
 
+        // Records an even on a compute stream.
+        virtual void RecordComputeStreamSyncPoint() = 0;
+
+        // Synchronizes GPU to CPU stream with recorded comput sync envent.
+        virtual void WaitForSyncPointOnFetchStreamAsync() = 0;
+
+        // Synchronizes CPU to GPU stream with recorded comput sync envent.
+        virtual void WaitForSyncPointOnAssignStreamAsync() = 0;
+
         virtual ~DataTransferer() {}
     };
 

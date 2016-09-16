@@ -54,7 +54,8 @@ GranularGPUDataTransferer::GranularGPUDataTransferer(int deviceId, bool blocking
       m_assignStream(nullptr),
       m_deviceId(deviceId),
       m_fetchCompleteEvent(nullptr),
-      m_assignCompleteEvent(nullptr)
+      m_assignCompleteEvent(nullptr),
+      m_syncEvent(nullptr)
 {
     PrepareDevice(m_deviceId);
 
@@ -67,6 +68,7 @@ GranularGPUDataTransferer::GranularGPUDataTransferer(int deviceId, bool blocking
     // events
     cudaEventCreateWithFlags(&m_fetchCompleteEvent, flags) || "cudaEventCreateWithFlags failed";
     cudaEventCreateWithFlags(&m_assignCompleteEvent, flags) || "cudaEventCreateWithFlags failed";
+    cudaEventCreateWithFlags(&m_syncEvent, cudaEventDisableTiming) || "cudaEventCreateWithFlags failed";
 }
 
 GranularGPUDataTransferer::~GranularGPUDataTransferer()
@@ -74,6 +76,7 @@ GranularGPUDataTransferer::~GranularGPUDataTransferer()
     // TODO: Check for error code and throw if !std::uncaught_exception()
     cudaEventDestroy(m_assignCompleteEvent);
     cudaEventDestroy(m_fetchCompleteEvent);
+    cudaEventDestroy(m_syncEvent);
 }
 
 void GranularGPUDataTransferer::CopyGPUToCPUAsync(const void* gpuBuffer, size_t numElements, size_t elementSize, void* cpuBuffer)
@@ -109,6 +112,24 @@ void GranularGPUDataTransferer::WaitForCopyCPUToGPU()
 {
     PrepareDevice(m_deviceId);
     cudaEventSynchronize(m_assignCompleteEvent) || "cudaEventSynchronize failed";
+}
+
+void GranularGPUDataTransferer::RecordComputeStreamSyncPoint()
+{
+    PrepareDevice(m_deviceId);
+    cudaEventRecord(m_syncEvent, GetStream()) || "cudeEventRecord failed";
+}
+
+void GranularGPUDataTransferer::WaitForSyncPointOnFetchStreamAsync()
+{
+    PrepareDevice(m_deviceId);
+    cudaStreamWaitEvent(m_fetchStream, m_syncEvent, 0 /*flags 'must be 0'*/) || "cudaStreamWaitEvent failed";
+}
+
+void GranularGPUDataTransferer::WaitForSyncPointOnAssignStreamAsync()
+{
+    PrepareDevice(m_deviceId);
+    cudaStreamWaitEvent(m_assignStream, m_syncEvent, 0 /*flags 'must be 0'*/) || "cudaStreamWaitEvent failed";
 }
 
 //// GPUDataTransferer

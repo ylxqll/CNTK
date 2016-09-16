@@ -179,12 +179,20 @@ bool ReaderShim<ElemType>::GetMinibatch(StreamMinibatchInputs& matrices)
 
     // Ok, prefetch is done.
     m_endOfEpoch = result.m_isEndOfEpoch;
-
     if (m_endOfEpoch && !result.m_isDataAvailable)
     {
         // No data and end of epoch, simply return.
         return false;
     }
+
+    // Remember current data transfer, async memcpy for it already started on the prefetch thread.
+    auto currentDataTransfer = m_currentDataTransferIndex;
+
+    // Let's update the current data transferer.
+    m_currentDataTransferIndex = (m_currentDataTransferIndex + 1) % 2;
+
+    // We need to make sure that the compute for the current transfer is finished before we start prefetch.
+    m_dataTransferers[m_currentDataTransferIndex]->RecordComputeStreamSyncPoint();
 
     // We have some data - let's swap the matrices.
     // We cannot simply change pointers because it seems they are remembered deeper in the network.
@@ -223,12 +231,10 @@ bool ReaderShim<ElemType>::GetMinibatch(StreamMinibatchInputs& matrices)
     // So pick up the first one.
     m_numParallelSequences = matrices.begin()->second.pMBLayout->GetNumParallelSequences();
 
-    auto currentDataTransfer = m_currentDataTransferIndex;
+    
     // It is time to issue the next prefetch.
     if (!m_endOfEpoch)
     {
-        // Let's update the current data transferer and trigger the new prefetch.
-        m_currentDataTransferIndex = (m_currentDataTransferIndex + 1) % 2;
         // Starting the prefetch task. There is always a single async read in flight.
         // When the network requests a new minibatch, we wait for the current async to finish, swap the buffers
         // and kick off the new prefetch.
@@ -252,6 +258,11 @@ typename ReaderShim<ElemType>::PrefetchResult ReaderShim<ElemType>::PrefetchMini
         return PrefetchResult{ minibatch.m_endOfEpoch, false };
 
     // Ok we have some data. Let's load it to GPU.
+    // But before we need to make sure that corresponding compute has already finished from the last iteration.
+
+    // We need to make sure that the compute for the current transfer is finished before we start prefetch.
+    m_dataTransferers[m_currentDataTransferIndex]->WaitForSyncPointOnAssignStreamAsync();
+
     for (const auto& mx : m_prefetchBuffer)
     {
         size_t streamId = m_nameToStreamId[mx.first];

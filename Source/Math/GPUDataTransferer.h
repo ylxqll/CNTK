@@ -36,6 +36,10 @@ public:
     void RecordCPUToGPUCopy() override;
     void WaitForCopyCPUToGPU() override;
 
+    void RecordComputeStreamSyncPoint() override;
+    void WaitForSyncPointOnFetchStreamAsync() override;
+    void WaitForSyncPointOnAssignStreamAsync() override;
+
 protected:
 #ifndef CPUONLY
     cudaStream_t m_fetchStream;
@@ -43,6 +47,7 @@ protected:
 
     mutable cudaEvent_t m_fetchCompleteEvent;
     mutable cudaEvent_t m_assignCompleteEvent;
+    mutable cudaEvent_t m_syncEvent;
 #endif // !CPUONLY
 
     int m_deviceId;
