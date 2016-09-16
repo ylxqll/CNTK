@@ -78,7 +78,7 @@ void ReaderShim<ElemType>::StartDistributedMinibatchLoop(
 
     // Let's check that there is no outstanding copies.
     // Wait on all events if there are any pending copy operations are in flight.
-    if (m_dataTransferers[m_currentDataTransferIndex] != nullptr)
+    if (m_dataTransferers[m_currentDataTransferIndex])
         m_dataTransferers[m_currentDataTransferIndex]->WaitForCopyCPUToGPU();
 
     // Now we can be sure, no prefetch thread is running and there are no outstanding memcopies.
@@ -192,7 +192,8 @@ bool ReaderShim<ElemType>::GetMinibatch(StreamMinibatchInputs& matrices)
     m_currentDataTransferIndex = (m_currentDataTransferIndex + 1) % 2;
 
     // We need to make sure that the compute for the current transfer is finished before we start prefetch.
-    m_dataTransferers[m_currentDataTransferIndex]->RecordComputeStreamSyncPoint();
+    if (m_dataTransferers[m_currentDataTransferIndex])
+        m_dataTransferers[m_currentDataTransferIndex]->RecordComputeStreamSyncPoint();
 
     // We have some data - let's swap the matrices.
     // We cannot simply change pointers because it seems they are remembered deeper in the network.
@@ -261,7 +262,8 @@ typename ReaderShim<ElemType>::PrefetchResult ReaderShim<ElemType>::PrefetchMini
     // But before we need to make sure that corresponding compute has already finished from the last iteration.
 
     // We need to make sure that the compute for the current transfer is finished before we start prefetch.
-    m_dataTransferers[m_currentDataTransferIndex]->WaitForSyncPointOnAssignStreamAsync();
+    if (m_dataTransferers[m_currentDataTransferIndex])
+        m_dataTransferers[m_currentDataTransferIndex]->WaitForSyncPointOnAssignStreamAsync();
 
     for (const auto& mx : m_prefetchBuffer)
     {
