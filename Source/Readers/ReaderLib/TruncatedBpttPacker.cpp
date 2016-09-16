@@ -107,8 +107,9 @@ struct SequenceBuffer
 
 TruncatedBPTTPacker::TruncatedBPTTPacker(
     SequenceEnumeratorPtr sequenceEnumerator,
-    const vector<StreamDescriptionPtr>& streams)
-    : PackerBase(sequenceEnumerator, streams),
+    const vector<StreamDescriptionPtr>& streams,
+    size_t numberOfBuffers)
+    : PackerBase(sequenceEnumerator, streams, numberOfBuffers),
     m_truncationSize(0)
 {
     auto sparseOutput = find_if(m_outputStreamDescriptions.begin(), m_outputStreamDescriptions.end(), [](const StreamDescriptionPtr& s){ return s->m_storageType == StorageType::sparse_csc; });
@@ -164,7 +165,7 @@ void TruncatedBPTTPacker::StartEpoch(const EpochConfiguration& config, const std
         for (int i = 0; i < m_outputStreamDescriptions.size(); ++i)
         {
             const auto& stream = m_outputStreamDescriptions[i];
-            auto& buffer = m_streamBuffers[i];
+            auto& buffer = m_streamBuffers[m_currentBufferIndex][i];
             buffer.Resize(m_numParallelSequences * m_truncationSize * GetSampleSize(stream));
             m_sequenceBufferPerStream.push_back(make_shared<SequenceBuffer>(m_numParallelSequences));
         }
@@ -200,7 +201,7 @@ Minibatch TruncatedBPTTPacker::ReadMinibatch()
         }
 
         StreamMinibatchPtr m = make_shared<StreamMinibatch>();
-        m->m_data = m_streamBuffers[streamIndex].m_data.get();
+        m->m_data = m_streamBuffers[m_currentBufferIndex][streamIndex].m_data.get();
         m->m_layout = m_currentLayouts[streamIndex];
         result.m_data.push_back(m);
     }
@@ -262,7 +263,7 @@ void TruncatedBPTTPacker::PackSlot(size_t streamIndex, size_t slotIndex, size_t&
         // Fill in the data from the first sequence in the slot.
         auto data = slot.FrontSequence();
         // Get buffer destination for the current sample.
-        auto& buffer = m_streamBuffers[streamIndex];
+        auto& buffer = m_streamBuffers[m_currentBufferIndex][streamIndex];
         auto offset = strideSize * currentTimestep + slotIndex * sampleSize;
         assert(offset >= 0 && offset < buffer.m_size);
         char* destination = buffer.m_data.get() + offset;

@@ -208,7 +208,7 @@ void GPUSparseMatrix<ElemType>::Reset()
 // copy features to GPU matrix
 template <class ElemType>
 void GPUSparseMatrix<ElemType>::SetMatrixFromCSCFormat(const CPUSPARSE_INDEX_TYPE* h_CSCCol, const CPUSPARSE_INDEX_TYPE* h_Row, const ElemType* h_Val,
-                                                       const size_t nz, const size_t numRows, const size_t numCols, const bool IsOnDevice /*= false*/, const DEVICEID_TYPE devId /*= -1*/, bool async)
+                                                       const size_t nz, const size_t numRows, const size_t numCols, const bool IsOnDevice /*= false*/, const DEVICEID_TYPE devId /*= -1*/, DataTransferer* transferer)
 {
 }
 
@@ -1014,7 +1014,7 @@ void GPUMatrix<ElemType>::SetValue(GPUSparseMatrix<ElemType> const&)
 #endif
 
 template <class ElemType>
-void GPUMatrix<ElemType>::SetValue(const size_t numRows, const size_t numCols, int deviceId, ElemType* pArray, size_t matrixFlags, bool async)
+void GPUMatrix<ElemType>::SetValue(const size_t numRows, const size_t numCols, int deviceId, ElemType* pArray, size_t matrixFlags, DataTransferer* transferer)
 {
 }
 
@@ -1854,12 +1854,6 @@ void GPUMatrix<ElemType>::RNNBackwardWeights(const GPUMatrix<ElemType>& inputX, 
 {
 }
 
-template<class ElemType> void GPUMatrix<ElemType>::RecordComputeSyncPoint() { }
-template<class ElemType> void GPUMatrix<ElemType>::SyncComputeBeforeRead() { }
-template<class ElemType> void GPUMatrix<ElemType>::SyncPendingRead() { }
-template<class ElemType> void GPUMatrix<ElemType>::SyncPendingCompute() { }
-template<class ElemType> void GPUMatrix<ElemType>::EnableConcurrentRead(DEVICEID_TYPE devId) { }
-
 #pragma endregion Other helper functions
 
 #pragma region Static BLAS Functions
@@ -2192,6 +2186,24 @@ void GPUMatrixComputeStreamEvent::SynchronizeDataTransferFetchStreamWithEvent<do
 #pragma endregion GPUMatrixComputeStreamEvent functions
 
 #pragma region GPUDataTransferer functions
+
+GranularGPUDataTransferer::GranularGPUDataTransferer(int deviceId, bool blocking /*= false*/) {}
+
+GranularGPUDataTransferer::~GranularGPUDataTransferer() {}
+
+void GranularGPUDataTransferer::CopyGPUToCPUAsync(const void* gpuBuffer, size_t numElements, size_t elementSize, void* cpuBuffer) {}
+
+void GranularGPUDataTransferer::RecordGPUToCPUCopy() {}
+
+void GranularGPUDataTransferer::WaitForCopyGPUToCPU() {}
+
+void GranularGPUDataTransferer::CopyCPUToGPUAsync(const void* cpuBuffer, size_t numElements, size_t elementSize, void* gpuBuffer) {}
+
+void GranularGPUDataTransferer::RecordCPUToGPUCopy() {}
+
+void GranularGPUDataTransferer::WaitForCopyCPUToGPU() {}
+
+PrefetchGPUDataTransferer::PrefetchGPUDataTransferer(int deviceId) : GranularGPUDataTransferer(deviceId, true) {}
 
 template <class ElemType>
 GPUDataTransferer<ElemType>::GPUDataTransferer(int, bool)

@@ -17,12 +17,13 @@
 #define DATAREADER_EXPORTS // creating the exports here
 #include "DataReader.h"
 #include "ReaderShim.h"
+#include "DataTransferer.h"
 
 namespace Microsoft { namespace MSR { namespace CNTK {
 
 template <class ElemType>
 ReaderShim<ElemType>::ReaderShim(ReaderFactory factory)
-    : m_factory(factory), m_deviceId(CPUDEVICE), m_outstandingRead(false)
+    : m_factory(factory), m_deviceId(CPUDEVICE), m_dataTransferers(2, DataTransfererPtr())
 {
 }
 
@@ -75,31 +76,49 @@ void ReaderShim<ElemType>::StartDistributedMinibatchLoop(
     config.m_totalEpochSizeInSamples = requestedEpochSamples;
     config.m_epochIndex = epoch;
 
-    std::map<std::wstring, int> inputDescriptions;
-    auto device = std::find_if(inputs.begin(), inputs.end(), [](const InputStreamDescription& d) { return d.m_deviceId != CPUDEVICE; });
+    // Let's check that there is no outstanding copies.
+    // Wait on all events if there are any pending copy operations are in flight.
+    if (m_dataTransferers[m_currentDataTransferIndex] != nullptr)
+        m_dataTransferers[m_currentDataTransferIndex]->WaitForCopyCPUToGPU();
 
-    m_deviceId = device != inputs.end() ? device->m_deviceId : CPUDEVICE;
+    // Now we can be sure, no prefetch thread is running and there are no outstanding memcopies.
+    // Let's check that requested devices are ok and see whether we need to change our data transferers.
+    auto device = std::find_if(inputs.begin(), inputs.end(),
+        [](const InputStreamDescription& d) { return d.m_deviceId != CPUDEVICE; });
+    auto deviceId = device != inputs.end() ? device->m_deviceId : CPUDEVICE;
 
-    Matrix<ElemType>::EnableConcurrentRead(m_deviceId);
-
-    if (m_outstandingRead)
+    // Check that all devices either the same as m_deviceId or CPU.
+    auto secondDevice = std::find_if(inputs.begin(), inputs.end(), 
+        [deviceId](const InputStreamDescription& d) { return d.m_deviceId != CPUDEVICE && d.m_deviceId != deviceId; });
+    if (secondDevice != inputs.end())
     {
-        Matrix<ElemType>::SyncComputeBeforeRead(m_deviceId);
-        m_outstandingRead = false;
+        LogicError("Readers do not support running on several GPUs in the same process, at least two devices found '%d', '%d'", deviceId, secondDevice->m_deviceId);
     }
 
+    if (m_deviceId != deviceId)
+    {
+        // Device changed. Let's change the data transferers.
+        m_deviceId = deviceId;
+        m_dataTransferers.clear();
+        // We need two in order to support two operations in flight.
+        m_dataTransferers.push_back(m_deviceId == CPUDEVICE ? nullptr : CreatePrefetchDataTransferer(m_deviceId));
+        m_dataTransferers.push_back(m_deviceId == CPUDEVICE ? nullptr : CreatePrefetchDataTransferer(m_deviceId));
+    }
+
+    // Let's create the buffers for the prefetch thread.
+    std::map<std::wstring, int> inputDescriptions;
     for (const auto& i : inputs)
     {
         inputDescriptions[i.m_name] = i.m_deviceId;
         m_prefetchBuffer[i.m_name] = std::make_shared<Matrix<ElemType>>(i.m_deviceId);
     }
 
-    m_reader->StartEpoch(config, inputDescriptions);
     m_endOfEpoch = false;
+    m_reader->StartEpoch(config, inputDescriptions);
 
     // Starting the prefetch task. There is always a single async read in flight.
-    // When the network requests a new minibatch, we wait for the current async to finish,
-    // return the result and kick off the new one.
+    // When the network requests a new minibatch, we wait for the current async to finish, swap the buffers
+    // and kick off the new prefetch.
     m_prefetchTask = std::async(m_launchType,
     [this]()
     {
@@ -127,7 +146,7 @@ string EnumerateInputs(const map<wstring, size_t> &nameToStreamId)
 template <class ElemType>
 bool ReaderShim<ElemType>::GetMinibatch(StreamMinibatchInputs& matrices)
 {
-    // TODO: verify that the set of matrix names is identical 
+    // TODO: verify that the set of matrix names is identical
     // to the set of reader input names. Warn if it's a subset, throw
     // if it's a superset.
     if (m_endOfEpoch)
@@ -137,16 +156,13 @@ bool ReaderShim<ElemType>::GetMinibatch(StreamMinibatchInputs& matrices)
 
     //TODO: Set proper format on matrices?
 
-
     // Check that all matrices have the same device id.
-    // If not we should inject the IMemoryProvider per stream.
+    // If not we should inject the MemoryProvider per stream.
     int deviceId = matrices.begin()->second.matrix->GetDeviceId();
     for (auto mx : matrices)
         assert(mx.second.matrix->GetDeviceId() == deviceId), UNUSED(deviceId);
 
-    assert(m_prefetchTask.valid());
-
-    // Do sanity checks:
+    // Do sanity checks: requested streams should be exposed by low level deserializers.
     for (const auto& mx : matrices)
     {
         if (m_nameToStreamId.find(mx.first) == m_nameToStreamId.end())
@@ -157,28 +173,28 @@ bool ReaderShim<ElemType>::GetMinibatch(StreamMinibatchInputs& matrices)
         }
     }
 
+    // Make sure the prefetch has finished.
+    assert(m_prefetchTask.valid());
     auto result = m_prefetchTask.get();
 
     // Ok, prefetch is done.
-    m_endOfEpoch = result.first;
-    bool dataNotEmpty = result.second;
+    m_endOfEpoch = result.m_isEndOfEpoch;
 
-    if (m_endOfEpoch && !dataNotEmpty) // No data and end of epoch, simply return.
+    if (m_endOfEpoch && !result.m_isDataAvailable)
     {
+        // No data and end of epoch, simply return.
         return false;
     }
 
-    // We have some data - let's swap it.
-    // Safe to swap the matrices now.
+    // We have some data - let's swap the matrices.
+    // We cannot simply change pointers because it seems they are remembered deeper in the network.
     for (auto i = matrices.begin(); i != matrices.end(); ++i)
     {
         std::swap(i->second.GetMatrix<ElemType>(), *m_prefetchBuffer[i->first]);
 
-        // BUGBUG: This seems incorrect. (1) layouts should all be updated below, and (2) some of these layouts are the same, we are resetting them twice.
+        // Resetting layouts.
         i->second.pMBLayout->Init(1, 0);
     }
-
-    // Let's take care of layouts now.
 
     // a map to generate error messages when checking layout constraints.
     map<wstring, wstring> layoutToInputMap;
@@ -207,37 +223,33 @@ bool ReaderShim<ElemType>::GetMinibatch(StreamMinibatchInputs& matrices)
     // So pick up the first one.
     m_numParallelSequences = matrices.begin()->second.pMBLayout->GetNumParallelSequences();
 
-    bool outstandingRead = m_outstandingRead;
-    m_outstandingRead = false;
-
+    auto currentDataTransfer = m_currentDataTransferIndex;
     // It is time to issue the next prefetch.
     if (!m_endOfEpoch)
     {
+        // Let's update the current data transferer and trigger the new prefetch.
+        m_currentDataTransferIndex = (m_currentDataTransferIndex + 1) % 2;
         // Starting the prefetch task. There is always a single async read in flight.
-        // When the network requests a new minibatch, we wait for the current async to finish,
-        // return the result and kick off the new one.
+        // When the network requests a new minibatch, we wait for the current async to finish, swap the buffers
+        // and kick off the new prefetch.
         m_prefetchTask = std::async(m_launchType, [this]() { return PrefetchMinibatch(); });
     }
 
-    if(!outstandingRead)
-        LogicError("GPU prefetch logic is incorrect.");
+    // Let's wait till the previous memcopy has finished.
+    if (m_dataTransferers[currentDataTransfer])
+        m_dataTransferers[currentDataTransfer]->WaitForCopyCPUToGPU();
 
-    Matrix<ElemType>::SyncComputeBeforeRead(deviceId);
-    return dataNotEmpty;
+    return result.m_isDataAvailable;
 }
 
 template <class ElemType>
-std::pair<bool, bool> ReaderShim<ElemType>::PrefetchMinibatch()
+typename ReaderShim<ElemType>::PrefetchResult ReaderShim<ElemType>::PrefetchMinibatch()
 {
-    Matrix<ElemType>::SetDevice(m_prefetchBuffer.begin()->second->GetDeviceId());
-
     Minibatch minibatch = m_reader->ReadMinibatch();
 
     // If there is no data we can simply return.
     if (minibatch.m_data.empty())
-    {
-        return std::make_pair(minibatch.m_endOfEpoch, false);
-    }
+        return PrefetchResult{ minibatch.m_endOfEpoch, false };
 
     // Ok we have some data. Let's load it to GPU.
     for (const auto& mx : m_prefetchBuffer)
@@ -247,25 +259,26 @@ std::pair<bool, bool> ReaderShim<ElemType>::PrefetchMinibatch()
         m_prefetchMbLayouts[mx.first] = stream->m_layout;
 
         size_t sampleSize = m_streams[streamId]->m_sampleLayout->GetNumElements();
-        FillMatrixFromStream(m_streams[streamId]->m_storageType, mx.second.get(), sampleSize, stream);
+        FillMatrixFromStream(m_streams[streamId]->m_storageType, mx.second.get(), sampleSize, stream, m_dataTransferers[m_currentDataTransferIndex].get());
     }
 
-    m_outstandingRead = true;
-    Matrix<ElemType>::RecordComputeSyncPoint(m_deviceId);
+    // Let's record that we started the copy, so that the main thread can wait afterwards.
+    if (m_dataTransferers[m_currentDataTransferIndex])
+        m_dataTransferers[m_currentDataTransferIndex]->RecordCPUToGPUCopy();
 
-    return std::make_pair(minibatch.m_endOfEpoch, true);
+    return PrefetchResult{ minibatch.m_endOfEpoch, true };
 }
 
 
 template <class ElemType>
-/*static*/ void ReaderShim<ElemType>::FillMatrixFromStream(StorageType type, Matrix<ElemType>* matrix, size_t numRows, const StreamMinibatchPtr& stream)
+/*static*/ void ReaderShim<ElemType>::FillMatrixFromStream(StorageType type, Matrix<ElemType>* matrix, size_t numRows, const StreamMinibatchPtr& stream, DataTransferer* transferer)
 {
     size_t numCols = stream->m_layout->GetNumCols();
 
     if (type == StorageType::dense)
     {
         auto data = reinterpret_cast<const ElemType*>(stream->m_data);
-        matrix->SetValue(numRows, numCols, matrix->GetDeviceId(), const_cast<ElemType*>(data), matrixFlagNormal, true);
+        matrix->SetValue(numRows, numCols, matrix->GetDeviceId(), const_cast<ElemType*>(data), matrixFlagNormal, transferer);
     }
     else if (type == StorageType::sparse_csc)
     {
@@ -276,12 +289,10 @@ template <class ElemType>
         ElemType* values = reinterpret_cast<ElemType*>(data + 1);
         IndexType* rows = reinterpret_cast<IndexType*>(values + nnzCount);
         IndexType* columns = reinterpret_cast<IndexType*>(rows + nnzCount);
-        matrix->SetMatrixFromCSCFormat(columns, rows, values, nnzCount, numRows, numCols, true);
+        matrix->SetMatrixFromCSCFormat(columns, rows, values, nnzCount, numRows, numCols, transferer);
     }
-    else 
-    {
+    else
         RuntimeError("Storage type %d is not supported.", (int)type);
-    }
 }
 
 template <class ElemType>

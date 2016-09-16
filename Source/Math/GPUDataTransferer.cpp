@@ -47,6 +47,70 @@ static
     }
 }
 
+//// Base class for different data transferers.
+
+GranularGPUDataTransferer::GranularGPUDataTransferer(int deviceId, bool blocking /*= false*/)
+    : m_fetchStream(nullptr),
+      m_assignStream(nullptr),
+      m_deviceId(deviceId)
+{
+    PrepareDevice(m_deviceId);
+
+    // Note: Do NOT use cudaEventBlockingSync (which supposedly yields the process)--it will totally break cudaEventSynchronize(), causing it to take 50 or 100 ms randomly.
+    // NOTE: We never saw this in reading prefetch.
+    unsigned flags = cudaEventDisableTiming;
+    if (blocking)
+        flags |= cudaEventBlockingSync;
+
+    // events
+    cudaEventCreateWithFlags(&m_fetchCompleteEvent, flags) || "cudaEventCreateWithFlags failed";
+    cudaEventCreateWithFlags(&m_assignCompleteEvent, flags) || "cudaEventCreateWithFlags failed";
+}
+
+GranularGPUDataTransferer::~GranularGPUDataTransferer()
+{
+    // TODO: Check for error code and throw if !std::uncaught_exception()
+    cudaEventDestroy(m_assignCompleteEvent);
+    cudaEventDestroy(m_fetchCompleteEvent);
+}
+
+void GranularGPUDataTransferer::CopyGPUToCPUAsync(const void* gpuBuffer, size_t numElements, size_t elementSize, void* cpuBuffer)
+{
+    PrepareDevice(m_deviceId);
+
+    cudaMemcpyAsync(cpuBuffer, gpuBuffer, numElements * elementSize, cudaMemcpyDeviceToHost, m_fetchStream) || "cudaMemcpyAsync failed";
+}
+
+void GranularGPUDataTransferer::RecordGPUToCPUCopy()
+{
+    cudaEventRecord(m_fetchCompleteEvent, m_fetchStream) || "cudaEventRecord failed";
+}
+
+void GranularGPUDataTransferer::WaitForCopyGPUToCPU()
+{
+    PrepareDevice(m_deviceId);
+    cudaEventSynchronize(m_fetchCompleteEvent) || "cudaEventSynchronize failed";
+}
+
+void GranularGPUDataTransferer::CopyCPUToGPUAsync(const void* cpuBuffer, size_t numElements, size_t elementSize, void* gpuBuffer)
+{
+    PrepareDevice(m_deviceId);
+    cudaMemcpyAsync(gpuBuffer, cpuBuffer, numElements * elementSize, cudaMemcpyHostToDevice, m_assignStream) || "cudaMemcpyAsync failed";
+}
+
+void GranularGPUDataTransferer::RecordCPUToGPUCopy()
+{
+    cudaEventRecord(m_assignCompleteEvent, m_assignStream) || "cudaEventRecord failed";
+}
+
+void GranularGPUDataTransferer::WaitForCopyCPUToGPU()
+{
+    PrepareDevice(m_deviceId);
+    cudaEventSynchronize(m_assignCompleteEvent) || "cudaEventSynchronize failed";
+}
+
+//// GPUDataTransferer
+
 // same but for event
 template <class ElemType>
 void GPUDataTransferer<ElemType>::SyncEvent(cudaEvent_t ev)
@@ -64,80 +128,88 @@ void GPUDataTransferer<ElemType>::SyncEvent(cudaEvent_t ev)
 
 //streams
 template <class ElemType>
-cudaStream_t GPUDataTransferer<ElemType>::m_fetchStream = NULL;
+cudaStream_t GPUDataTransferer<ElemType>::s_fetchStream = NULL;
 
 template <class ElemType>
-cudaStream_t GPUDataTransferer<ElemType>::m_assignStream = NULL;
+cudaStream_t GPUDataTransferer<ElemType>::s_assignStream = NULL;
 
 template <class ElemType>
 cudaStream_t GPUDataTransferer<ElemType>::GetFetchStream()
 {
-    return m_fetchStream;
+    return s_fetchStream;
 }
 
 template <class ElemType>
-GPUDataTransferer<ElemType>::GPUDataTransferer(int deviceId, bool useConcurrentStreams)
-    : m_deviceId(deviceId)
+GPUDataTransferer<ElemType>::GPUDataTransferer(int deviceId, bool useConcurrentStreams) 
+    : m_inner(new GranularGPUDataTransferer(deviceId))
 {
-    PrepareDevice(m_deviceId);
-
-    // events
-    // Note: Do NOT use cudaEventBlockingSync (which supposedly yields the process)--it will totally break cudaEventSynchronize(), causing it to take 50 or 100 ms randomly.
-    cudaEventCreateWithFlags(&m_fetchCompleteEvent, cudaEventDisableTiming) || "cudaEventCreateWithFlags failed";
-    cudaEventCreateWithFlags(&m_assignCompleteEvent, cudaEventDisableTiming) || "cudaEventCreateWithFlags failed";
-
 #pragma warning(disable : 4127)
-    if (useConcurrentStreams && (m_fetchStream == NULL))
+    if (useConcurrentStreams && (s_fetchStream == NULL))
     {
-        cudaStreamCreateWithFlags(&m_fetchStream, cudaStreamNonBlocking) || "cudaStreamCreateWithFlags failed";
-        cudaStreamCreateWithFlags(&m_assignStream, cudaStreamNonBlocking) || "cudaStreamCreateWithFlags failed";
+        cudaStreamCreateWithFlags(&s_fetchStream, cudaStreamNonBlocking) || "cudaStreamCreateWithFlags failed";
+        cudaStreamCreateWithFlags(&s_assignStream, cudaStreamNonBlocking) || "cudaStreamCreateWithFlags failed";
     }
+
+    m_inner->m_fetchStream = s_fetchStream;
+    m_inner->m_assignStream = s_assignStream;
 }
 
 template <class ElemType>
 GPUDataTransferer<ElemType>::~GPUDataTransferer()
 {
+    delete m_inner;
     // BUGBUG: we don't destroy our streams (they are static variables); we need a static destructor, I am too lazy now
-    // TODO: Check for error code and throw if !std::uncaught_exception()
-    cudaEventDestroy(m_assignCompleteEvent);
-    cudaEventDestroy(m_fetchCompleteEvent);
 }
 
 template <class ElemType>
 void GPUDataTransferer<ElemType>::CopyGPUToCPUAsync(ElemType* gpuBuffer, size_t numElements, ElemType* cpuBuffer)
 {
-    PrepareDevice(m_deviceId);
-
-    cudaMemcpyAsync(cpuBuffer, gpuBuffer, numElements * sizeof(ElemType), cudaMemcpyDeviceToHost, m_fetchStream) || "cudaMemcpyAsync failed";
-    cudaEventRecord(m_fetchCompleteEvent, m_fetchStream) || "cudaEventRecord failed";
-}
-
-template <class ElemType>
-void GPUDataTransferer<ElemType>::WaitForCopyGPUToCPUAsync()
-{
-    PrepareDevice(m_deviceId);
-
-    SyncEvent(m_fetchCompleteEvent);
+    m_inner->CopyGPUToCPUAsync(gpuBuffer, numElements, sizeof(ElemType), cpuBuffer);
+    m_inner->RecordGPUToCPUCopy();
 }
 
 template <class ElemType>
 void GPUDataTransferer<ElemType>::CopyCPUToGPUAsync(ElemType* cpuBuffer, size_t numElements, ElemType* gpuBuffer)
 {
-    PrepareDevice(m_deviceId);
+    m_inner->CopyCPUToGPUAsync(cpuBuffer, numElements, sizeof(ElemType), gpuBuffer);
+    m_inner->RecordCPUToGPUCopy();
+}
 
-    cudaMemcpyAsync(gpuBuffer, cpuBuffer, numElements * sizeof(ElemType), cudaMemcpyHostToDevice, m_assignStream) || "cudaMemcpyAsync failed";
-    cudaEventRecord(m_assignCompleteEvent, m_assignStream) || "cudaEventRecord failed";
+template <class ElemType>
+void GPUDataTransferer<ElemType>::WaitForCopyGPUToCPUAsync()
+{
+    PrepareDevice(m_inner->m_deviceId);
+
+    SyncEvent(m_inner->m_fetchCompleteEvent);
 }
 
 template <class ElemType>
 void GPUDataTransferer<ElemType>::WaitForCopyCPUToGPUAsync()
 {
-    PrepareDevice(m_deviceId);
+    PrepareDevice(m_inner->m_deviceId);
 
-    SyncEvent(m_assignCompleteEvent);
+    SyncEvent(m_inner->m_assignCompleteEvent);
 }
 
 //explicit
 template class GPUDataTransferer<float>;
 template class GPUDataTransferer<double>;
+
+/// PrefetchGPUDataTransferer
+
+cudaStream_t PrefetchGPUDataTransferer::s_prefetchStream = nullptr;
+
+PrefetchGPUDataTransferer::PrefetchGPUDataTransferer(int deviceId) : GranularGPUDataTransferer(deviceId, true)
+{
+#pragma warning(disable : 4127)
+    if (s_prefetchStream == nullptr)
+    {
+        // TODO: Currently the s_prefetchStream is not destroyed.
+        // As static it can be used in several readers with different lifecycle so we allow it to live till the end.
+        cudaStreamCreateWithFlags(&s_prefetchStream, cudaStreamNonBlocking) || "cudaStreamCreateWithFlags failed";
+    }
+
+    m_assignStream = s_prefetchStream;
+}
+
 } } }

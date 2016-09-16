@@ -40,6 +40,8 @@ public:
     virtual void Destroy() override
     {
         // Make sure there are no outstanding reads.
+        // Future destructor does not wait as of 2013 so probably it is not in VS2013:
+        // More info can be found here http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2013/n3679.html.
         if (m_prefetchTask.valid())
         {
             // If there are some, give them time to finish.
@@ -76,9 +78,15 @@ public:
     virtual size_t GetNumParallelSequencesForFixingBPTTMode() override;
 
 private:
-    std::pair<bool, bool> PrefetchMinibatch();
+    struct PrefetchResult
+    {
+        bool m_isEndOfEpoch;
+        bool m_isDataAvailable;
+    };
 
-    std::future<std::pair<bool, bool>> m_prefetchTask;
+    PrefetchResult PrefetchMinibatch();
+
+    std::future<PrefetchResult> m_prefetchTask;
     ReaderPtr m_reader;
     ReaderFactory m_factory;
     bool m_endOfEpoch;
@@ -89,13 +97,32 @@ private:
     std::vector<StreamDescriptionPtr> m_streams;
     launch m_launchType;
 
+    // Data structure required for prefetch.
+
+    // Intermediate buffer where the prefetch thread puts its data to.
+    // When the main thread enters GetMinibatch it swaps the matrices from this buffer,
+    // triggers the next prefetch and waits if memCpy is still in progress.
     std::map<std::wstring, std::shared_ptr<Matrix<ElemType>>> m_prefetchBuffer;
+
+    // Same as above but for the minibatch layouts.
     std::map<std::wstring, MBLayoutPtr> m_prefetchMbLayouts;
 
-    int m_deviceId;
-    bool m_outstandingRead;
+    // Alternating data transfer operations. In the current version these are only two - 
+    // currently waiting on the main thread and the one that can be started by the prefetch thread 
+    // in the meantime.
+    std::vector<DataTransfererPtr> m_dataTransferers;
+    // Current data transfer. Flips 0 and 1.
+    size_t m_currentDataTransferIndex; 
 
-    static void FillMatrixFromStream(StorageType type, Matrix<ElemType>* matrix, size_t numRows, const StreamMinibatchPtr& stream);
+    // Device id.
+    int m_deviceId;
+
+    static void FillMatrixFromStream(
+        StorageType type,
+        Matrix<ElemType>* matrix,
+        size_t numRows,
+        const StreamMinibatchPtr& stream,
+        DataTransferer* transferer);
 };
 
 }}}

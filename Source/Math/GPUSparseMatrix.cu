@@ -32,9 +32,6 @@ static
 #endif
     cudaStream_t t_stream;
 
-// Prefetch stream. Defined in GPUMatrix.
-extern cudaStream_t t_dataCopyStream;
-
 template <>
 const char* CudaErrString<cusparseStatus_t>(cusparseStatus_t)
 {
@@ -897,7 +894,7 @@ void GPUSparseMatrix<ElemType>::GetMatrixFromCSRFormat(CPUSPARSE_INDEX_TYPE*& h_
 
 template <class ElemType>
 void GPUSparseMatrix<ElemType>::SetMatrixFromCSCFormat(const CPUSPARSE_INDEX_TYPE* h_CSCCol, const CPUSPARSE_INDEX_TYPE* h_Row, const ElemType* h_Val,
-                                                       const size_t nz, const size_t numRows, const size_t numCols, const bool IsOnDevice /*= false*/, const DEVICEID_TYPE devId /*= -1*/, bool async /*= false*/)
+    const size_t nz, const size_t numRows, const size_t numCols, const bool IsOnDevice /*= false*/, const DEVICEID_TYPE devId /*= -1*/, DataTransferer* transferer /*= nullptr*/)
 {
     VerifyWritable(__func__);
 
@@ -908,25 +905,22 @@ void GPUSparseMatrix<ElemType>::SetMatrixFromCSCFormat(const CPUSPARSE_INDEX_TYP
     SetFormat(matrixFormatSparseCSC);
     RequireSizeAndAllocate(numRows, numCols, nz, true, false);
 
-    if (async && IsOnDevice)
+    if (transferer && IsOnDevice)
         RuntimeError("Currently it is prohibited to copy data asynchronous from device to device.");
-
-    if (async && t_dataCopyStream == nullptr)
-            RuntimeError("Data stream was not initialized for asynchronous data copy.");
 
 	// m_nz doesn't exist anymore. How are we going to deal with the NzSize, RowSize, and ColSize? Do it ourselves of course.
     cudaMemcpyKind kind = IsOnDevice ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice;
-    if (async)
-        CUDA_CALL(cudaMemcpyAsync(Data(), h_Val, nz * sizeof(ElemType), kind, t_dataCopyStream));
+    if (transferer)
+        transferer->CopyCPUToGPUAsync(h_Val, nz, sizeof(ElemType), Data());
     else
         CUDA_CALL(cudaMemcpy(Data(), h_Val, nz * sizeof(ElemType), kind));
 
     if (sizeof(CPUSPARSE_INDEX_TYPE) == sizeof(GPUSPARSE_INDEX_TYPE))
     {
-        if (async)
+        if (transferer)
         {
-            CUDA_CALL(cudaMemcpyAsync(RowLocation(), h_Row, sizeof(GPUSPARSE_INDEX_TYPE) * nz, kind, t_dataCopyStream));
-            CUDA_CALL(cudaMemcpyAsync(ColLocation(), h_CSCCol, sizeof(GPUSPARSE_INDEX_TYPE) * (numCols + 1), kind, t_dataCopyStream));
+            transferer->CopyCPUToGPUAsync(h_Row, nz, sizeof(GPUSPARSE_INDEX_TYPE), RowLocation());
+            transferer->CopyCPUToGPUAsync(h_CSCCol, numCols + 1, sizeof(GPUSPARSE_INDEX_TYPE), ColLocation());
         }
         else
         {
@@ -943,10 +937,10 @@ void GPUSparseMatrix<ElemType>::SetMatrixFromCSCFormat(const CPUSPARSE_INDEX_TYP
         ConvertBuffer(pCol, h_CSCCol, (numCols+1));
         ConvertBuffer(pRow, h_Row, nz);
 
-        if (async)
+        if (transferer)
         {
-            CUDA_CALL(cudaMemcpyAsync(RowLocation(), pRow, sizeof(GPUSPARSE_INDEX_TYPE) * nz, kind, t_dataCopyStream));
-            CUDA_CALL(cudaMemcpyAsync(ColLocation(), pCol, sizeof(GPUSPARSE_INDEX_TYPE) * (numCols + 1), kind, t_dataCopyStream));
+            transferer->CopyCPUToGPUAsync(pRow, nz, sizeof(GPUSPARSE_INDEX_TYPE), RowLocation());
+            transferer->CopyCPUToGPUAsync(pCol, numCols + 1, sizeof(GPUSPARSE_INDEX_TYPE), ColLocation());
         }
         else
         {

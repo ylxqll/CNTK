@@ -47,9 +47,6 @@ __declspec(thread)
 #endif
     cudaStream_t t_stream = cudaStreamDefault;
 
-cudaStream_t t_dataCopyStream = nullptr;
-cudaEvent_t t_computeEvent = nullptr;
-
 #define DEFAULT_THREAD_PER_DIM 16
 
 extern int _ConvertSMVer2Cores(int major, int minor); // forward declaration
@@ -1182,17 +1179,8 @@ void GPUMatrix<ElemType>::SetValue(const GPUSparseMatrix<ElemType>& deepCopyFrom
 }
 #endif
 
-static void copyDataAsync(void *dst, const void *src, size_t count, size_t matrixFlags)
-{
-    if (t_dataCopyStream == nullptr)
-        RuntimeError("Data stream was not initialized for asynchronous data copy.");
-    if (matrixFlags & matrixFlagSetValueOnDevice)
-        RuntimeError("Currently it is prohibited to copy data asynchronous from device to device.");
-    CUDA_CALL(cudaMemcpyAsync(dst, src, count, cudaMemcpyHostToDevice, t_dataCopyStream));
-}
-
 template <class ElemType>
-void GPUMatrix<ElemType>::SetValue(const size_t numRows, const size_t numCols, int deviceId, ElemType* pArray, size_t matrixFlags, bool async)
+void GPUMatrix<ElemType>::SetValue(const size_t numRows, const size_t numCols, int deviceId, ElemType* pArray, size_t matrixFlags, DataTransferer* transferer)
 {
     // handle externally managed case
 	// BUGBUG: This is super super ugly, and needs to be fixed, but if matrixFlags has the right value, then we can't free anything,
@@ -1213,6 +1201,9 @@ void GPUMatrix<ElemType>::SetValue(const size_t numRows, const size_t numCols, i
     }
     else
     {
+        if (transferer && matrixFlags & matrixFlagSetValueOnDevice)
+            RuntimeError("Asynchronous data copy from device to device is currently not supported.");
+
         // if the devices are different move it now
         if (GetComputeDeviceId() != deviceId && deviceId >= 0)
         {
@@ -1229,8 +1220,8 @@ void GPUMatrix<ElemType>::SetValue(const size_t numRows, const size_t numCols, i
         {
             if (!(matrixFlags & matrixFormatRowMajor))
             {
-                if (async)
-                    copyDataAsync(Data(), pArray, sizeof(ElemType) * GetNumElements(), matrixFlags);
+                if (transferer)
+                    transferer->CopyCPUToGPUAsync(pArray, GetNumElements(), sizeof(ElemType), Data());
                 else
                     CUDA_CALL(cudaMemcpy(Data(), pArray, sizeof(ElemType) * GetNumElements(), (matrixFlags & matrixFlagSetValueOnDevice) ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice));
             }
@@ -1241,8 +1232,8 @@ void GPUMatrix<ElemType>::SetValue(const size_t numRows, const size_t numCols, i
                     for (size_t j = 0; j < numCols; j++)
                         transposed[i + numRows * j] = pArray[j + numCols * i];
 
-                if (async)
-                    copyDataAsync(Data(), transposed.data(), sizeof(ElemType) * GetNumElements(), matrixFlags);
+                if (transferer)
+                    transferer->CopyCPUToGPUAsync(transposed.data(), GetNumElements(), sizeof(ElemType), Data());
                 else
                     CUDA_CALL(cudaMemcpy(Data(), transposed.data(), sizeof(ElemType) * GetNumElements(), (matrixFlags & matrixFlagSetValueOnDevice) ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice));
             }
@@ -3083,51 +3074,6 @@ GPUMatrix<ElemType>& GPUMatrix<ElemType>::AddAveragePoolingGradient(const GPUMat
     return *this;
 }
 
-template<class ElemType>
-void GPUMatrix<ElemType>::RecordComputeSyncPoint()
-{
-    if (t_computeEvent == nullptr)
-    {
-        CUDA_CALL(cudaEventCreate(&t_computeEvent, cudaEventBlockingSync));
-    }
-    CUDA_CALL(cudaEventRecord(t_computeEvent, t_dataCopyStream));
-}
-
-template<class ElemType>
-void GPUMatrix<ElemType>::SyncComputeBeforeRead()
-{
-    assert(t_dataCopyStream != nullptr);
-    if (t_computeEvent != nullptr)
-    {
-        CUDA_CALL(cudaEventSynchronize(t_computeEvent));
-    }
-}
-
-// TODO: We are leaking t_readAheadStream, call cudaStreamDestroy
-// Not a big issue since it will be cleaned up on process shutdown
-template<class ElemType>
-void GPUMatrix<ElemType>::EnableConcurrentRead(DEVICEID_TYPE devId)
-{
-    CUDA_CALL(cudaSetDevice(devId));
-    if (t_dataCopyStream == nullptr)
-    {
-        CUDA_CALL(cudaStreamCreateWithFlags(&t_dataCopyStream, cudaStreamNonBlocking));
-    }
-}
-
-template<class ElemType>
-void GPUMatrix<ElemType>::SyncPendingRead()
-{
-    assert(t_dataCopyStream != nullptr);
-    CUDA_CALL(cudaStreamSynchronize(t_dataCopyStream));
-}
-
-template<class ElemType>
-void GPUMatrix<ElemType>::SyncPendingCompute()
-{
-    CUDA_CALL(cudaStreamSynchronize(t_stream));
-}
-
 #pragma endregion Other helper functions
 
 template <class ElemType>
@@ -4585,7 +4531,7 @@ template GPUMatrix<char> GPUMatrix<char>::ColumnSlice(size_t startColumn, size_t
 template GPUMatrix<char>& GPUMatrix<char>::operator=(GPUMatrix<char>&&);
 template GPUMatrix<char>::GPUMatrix(int);
 template void GPUMatrix<char>::SetValue(const char);
-template void GPUMatrix<char>::SetValue(const size_t numRows, const size_t numCols, int deviceId, char* pArray, size_t matrixFlags, bool async);
+template void GPUMatrix<char>::SetValue(const size_t numRows, const size_t numCols, int deviceId, char* pArray, size_t matrixFlags, DataTransferer* transferer);
 //template void GPUMatrix<char>::SetValue(CPUMatrix<char> const&);
 template void GPUMatrix<char>::SetValue(GPUMatrix<char> const&);
 //template void GPUMatrix<char>::SetValue(CPUSparseMatrix<char> const&);
@@ -4610,7 +4556,7 @@ template GPUMatrix<short> GPUMatrix<short>::ColumnSlice(size_t startColumn, size
 template GPUMatrix<short>& GPUMatrix<short>::operator=(GPUMatrix<short>&&);
 template GPUMatrix<short>::GPUMatrix(int);
 template void GPUMatrix<short>::SetValue(const short);
-template void GPUMatrix<short>::SetValue(const size_t numRows, const size_t numCols, int deviceId, short* pArray, size_t matrixFlags, bool async);
+template void GPUMatrix<short>::SetValue(const size_t numRows, const size_t numCols, int deviceId, short* pArray, size_t matrixFlags, DataTransferer* transferer);
 //template void GPUMatrix<short>::SetValue(CPUMatrix<short> const&);
 template void GPUMatrix<short>::SetValue(GPUMatrix<short> const&);
 //template void GPUMatrix<short>::SetValue(CPUSparseMatrix<short> const&);

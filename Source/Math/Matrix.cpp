@@ -1266,15 +1266,16 @@ void Matrix<ElemType>::AssignValuesOf(const Matrix<ElemType>& deepCopyFrom)
 }
 
 template <class ElemType>
-void Matrix<ElemType>::SetValue(const size_t numRows, const size_t numCols, int deviceId, ElemType* pArray, const size_t matrixFlags, bool async)
+void Matrix<ElemType>::SetValue(const size_t numRows, const size_t numCols, int deviceId, ElemType* pArray, const size_t matrixFlags, DataTransferer* transferer)
 {
     if (((numRows * numCols) > 0) && (pArray == nullptr))
         InvalidArgument("Invalid pArray.");
 
+    // Only gpu matrix supports async data transfers, so data transferer passed only to gpu matrix.
     DISPATCH_MATRIX_ON_FLAG(this,
                             this,
                             m_CPUMatrix->SetValue(numRows, numCols, pArray, matrixFlags),
-                            m_GPUMatrix->SetValue(numRows, numCols, deviceId, pArray, matrixFlags, async),
+                            m_GPUMatrix->SetValue(numRows, numCols, deviceId, pArray, matrixFlags, transferer),
                             NOT_IMPLEMENTED,
                             NOT_IMPLEMENTED);
 }
@@ -1293,10 +1294,14 @@ void Matrix<ElemType>::SetValue(const size_t rIdx, const size_t cIdx, ElemType v
 // read features
 template <class ElemType>
 void Matrix<ElemType>::SetMatrixFromCSCFormat(const CPUSPARSE_INDEX_TYPE* h_CSCCol, const CPUSPARSE_INDEX_TYPE* h_Row, const ElemType* h_Val,
-                                              const size_t nz, const size_t numRows, const size_t numCols, bool async /*=false*/)
+    const size_t nz, const size_t numRows, const size_t numCols, DataTransferer* transferer)
 {
     // Note: The current implementation uses the xPUSparseMatrix as temporary space. This allows for memory sharing between calls. If
     // xPUSparseMatrix is a view, this code will cause an error during runtime stating that the view is not writable nor resizable.
+
+    // Only gpu matrix supports async data transfers, so data transferer passed only to gpu matrix in case we do not need to reassign to dense.
+    // When we have to reassing sparse to dense we cannot use async operation, because at the time when AssignColumnSliceToDense is called the
+    // data should already be copied to destination.
     DISPATCH_MATRIX_ON_FLAG(this, this,
         {
             if (!m_CPUSparseMatrix) m_CPUSparseMatrix = make_shared<CPUSparseMatrix<ElemType>>(matrixFormatSparseCSC, numRows, numCols, nz);
@@ -1309,7 +1314,7 @@ void Matrix<ElemType>::SetMatrixFromCSCFormat(const CPUSPARSE_INDEX_TYPE* h_CSCC
             m_GPUSparseMatrix->AssignColumnSliceToDense(*m_GPUMatrix, 0, numCols);
         },
         { m_CPUSparseMatrix->SetMatrixFromCSCFormat(h_CSCCol, h_Row, h_Val, nz, numRows, numCols); },
-        { m_GPUSparseMatrix->SetMatrixFromCSCFormat(h_CSCCol, h_Row, h_Val, nz, numRows, numCols, async); });
+        { m_GPUSparseMatrix->SetMatrixFromCSCFormat(h_CSCCol, h_Row, h_Val, nz, numRows, numCols, false, -1, transferer); });
 }
 
 template <class ElemType>
@@ -5457,57 +5462,6 @@ void Matrix<ElemType>::TensorOp(ElemType beta, const Matrix<ElemType>& a, const 
                             NOT_IMPLEMENTED);
 }
 
-// Functions for async data copy to matrix.
-template<class ElemType>
-void Matrix<ElemType>::RecordComputeSyncPoint(DEVICEID_TYPE devId)
-{
-    // This function is necessary and has any effect only on GPU
-    if (devId >= 0)
-    {
-        GPUMatrix<ElemType>::RecordComputeSyncPoint();
-    }
-}
-
-template<class ElemType>
-void Matrix<ElemType>::SyncComputeBeforeRead(DEVICEID_TYPE devId)
-{
-    // This function is necessary and has any effect only on GPU
-    if (devId >= 0)
-    {
-        GPUMatrix<ElemType>::SyncComputeBeforeRead();
-    }
-}
-
-template<class ElemType>
-void Matrix<ElemType>::SyncPendingRead(DEVICEID_TYPE devId)
-{
-    // This function is necessary and has any effect only on GPU
-    if (devId >= 0)
-    {
-        GPUMatrix<ElemType>::SyncPendingRead();
-    }
-}
-
-template<class ElemType>
-void Matrix<ElemType>::SyncPendingCompute(DEVICEID_TYPE devId)
-{
-    // This function is necessary and has any effect only on GPU
-    if (devId >= 0)
-    {
-        GPUMatrix<ElemType>::SyncPendingCompute();
-    }
-}
-
-template<class ElemType>
-void Matrix<ElemType>::EnableConcurrentRead(DEVICEID_TYPE devId)
-{
-    // This function is necessary and has any effect only on GPU
-    if (devId >= 0)
-    {
-        GPUMatrix<ElemType>::EnableConcurrentRead(devId);
-    }
-}
-
 //template class Matrix<short>;
 template class Matrix<float>;
 template class Matrix<double>;
@@ -5529,7 +5483,7 @@ template void Matrix<char>::TransferToDeviceIfNotThere(int id_to, bool isBeingMo
 template size_t Matrix<char>::GetNumRows() const;
 template size_t Matrix<char>::GetNumCols() const;
 template void Matrix<char>::SetValue(const char);
-template void Matrix<char>::SetValue(size_t numRows, const size_t numCols, int deviceId, char* pArray, size_t matrixFlags, bool async);
+template void Matrix<char>::SetValue(size_t numRows, const size_t numCols, int deviceId, char* pArray, size_t matrixFlags, DataTransferer* transferer);
 //template void Matrix<char>::SetValue(const Matrix<char>&, MatrixFormat);
 template void Matrix<char>::SetValue(const Matrix<char>&);
 template void Matrix<char>::AssignValuesOf   (const Matrix<char>&);
@@ -5554,7 +5508,7 @@ template void Matrix<short>::TransferToDeviceIfNotThere(int id_to, bool isBeingM
 template size_t Matrix<short>::GetNumRows() const;
 template size_t Matrix<short>::GetNumCols() const;
 template void Matrix<short>::SetValue(const short);
-template void Matrix<short>::SetValue(size_t numRows, const size_t numCols, int deviceId, short* pArray, size_t matrixFlags, bool async);
+template void Matrix<short>::SetValue(size_t numRows, const size_t numCols, int deviceId, short* pArray, size_t matrixFlags, DataTransferer* transferer);
 //template void Matrix<short>::SetValue(const Matrix<short>&, MatrixFormat);
 template void Matrix<short>::SetValue(const Matrix<short>&);
 template void Matrix<short>::AssignValuesOf(const Matrix<short>&);
