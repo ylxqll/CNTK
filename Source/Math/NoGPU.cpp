@@ -2187,21 +2187,27 @@ void GPUMatrixComputeStreamEvent::SynchronizeDataTransferFetchStreamWithEvent<do
 
 #pragma region GPUDataTransferer functions
 
-GranularGPUDataTransferer::GranularGPUDataTransferer(int deviceId, bool blocking /*= false*/) {}
+GranularGPUDataTransferer::GranularGPUDataTransferer(int /*deviceId*/, bool /*blocking = false*/) {}
 
 GranularGPUDataTransferer::~GranularGPUDataTransferer() {}
 
-void GranularGPUDataTransferer::CopyGPUToCPUAsync(const void* gpuBuffer, size_t numElements, size_t elementSize, void* cpuBuffer) {}
+void GranularGPUDataTransferer::CopyGPUToCPUAsync(const void* /*gpuBuffer*/, size_t /*numElements*/, size_t /*elementSize*/, void* /*cpuBuffer*/) {}
 
 void GranularGPUDataTransferer::RecordGPUToCPUCopy() {}
 
 void GranularGPUDataTransferer::WaitForCopyGPUToCPU() {}
 
-void GranularGPUDataTransferer::CopyCPUToGPUAsync(const void* cpuBuffer, size_t numElements, size_t elementSize, void* gpuBuffer) {}
+void GranularGPUDataTransferer::CopyCPUToGPUAsync(const void* /*cpuBuffer*/, size_t /*numElements*/, size_t /*elementSize*/, void* /*gpuBuffer*/) {}
 
 void GranularGPUDataTransferer::RecordCPUToGPUCopy() {}
 
 void GranularGPUDataTransferer::WaitForCopyCPUToGPU() {}
+
+void GranularGPUDataTransferer::RecordComputeStreamSyncPoint() {}
+
+void GranularGPUDataTransferer::WaitForSyncPointOnFetchStreamAsync() {}
+
+void GranularGPUDataTransferer::WaitForSyncPointOnAssignStreamAsync() {}
 
 PrefetchGPUDataTransferer::PrefetchGPUDataTransferer(int deviceId) : GranularGPUDataTransferer(deviceId, true) {}
 
