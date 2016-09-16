@@ -80,13 +80,13 @@ void EvaluationNewNetworkWithSharedParameters(size_t inputDim,
     auto ffNet = CNTK::Combine({trainingLossFunction, predictionFunction, classifierOutputFunction}, L"ClassifierModel");
 
     if (ffNet->Parameters().size() != ((numHiddenLayers * 2) + 1))
-        throw std::runtime_error("TestFeedForwardNetworkCreation: Function does not have expected Parameter count");
+        throw std::runtime_error("EvaluationNewNetworkWithSharedParameters: Function does not have expected Parameter count");
 
     if (ffNet->Arguments().size() != 2)
-        throw std::runtime_error("TestFeedForwardNetworkCreation: Function does not have expected Argument count");
+        throw std::runtime_error("EvaluationNewNetworkWithSharedParameters: Function does not have expected Argument count");
 
     if (ffNet->Outputs().size() != 3)
-        throw std::runtime_error("TestFeedForwardNetworkCreation: Function does not have expected Output count");
+        throw std::runtime_error("EvaluationNewNetworkWithSharedParameters: Function does not have expected Output count");
 
     // Evaluate the network in several runs 
     size_t iterationCount = 4;
@@ -157,10 +157,25 @@ void TestEvalMultiThreadsWithNewNetwork(const DeviceDescriptor& device, const in
     }
 }
 
-int main()
+int main(int argc, char* argv[])
 {
-    int threadCount = 2;
+    unsigned int threadCount;
 
-    // Multi-thread evaluation currently only supports CPU version.
-    TestEvalMultiThreadsWithNewNetwork(DeviceDescriptor::CPUDevice(), threadCount);
+    if (argc <= 1)
+    {
+        // Multi-thread evaluation currently only supports CPU version.
+        TestEvalMultiThreadsWithNewNetwork(DeviceDescriptor::CPUDevice(), 2);
+    }
+    else
+    {
+        for (int i = 1; i < argc; i++)
+        {
+            threadCount = atoi(argv[i]);
+            if (threadCount > 0)
+            {
+                // Multi-thread evaluation currently only supports CPU version.
+                TestEvalMultiThreadsWithNewNetwork(DeviceDescriptor::CPUDevice(), threadCount);
+            }
+        }
+    }
 }

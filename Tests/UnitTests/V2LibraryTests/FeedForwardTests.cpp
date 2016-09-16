@@ -90,7 +90,6 @@ void TestFeedForwardNetworkCreation(const DeviceDescriptor& device, bool testSav
         auto backpropState = ffNet->Forward({ { inputVar, inputValue }, { labelsVar, labelValue } }, outputs, device, { trainingLoss });
 
         // Perform backprop
-
         NDShape outputShape = trainingLoss->Output().Shape();
         std::vector<float> rootGradientsData(outputShape.TotalSize(), 1);
         ValuePtr rootGradientValue = MakeSharedObject<Value>(MakeSharedObject<NDArrayView>(outputShape, rootGradientsData.data(), rootGradientsData.size(), DeviceDescriptor::CPUDevice(), true));
@@ -100,9 +99,7 @@ void TestFeedForwardNetworkCreation(const DeviceDescriptor& device, bool testSav
             paramGradients[*iter] = nullptr;
  
         ffNet->Backward(backpropState, { { trainingLoss, rootGradientValue } }, paramGradients); 
-
     }
-
 }
 
 template <typename ElementType>
@@ -248,7 +245,6 @@ void TestTimesAndPlus(size_t inputDim,
 
 void FeedForwardTests()
 {
-
     TestTimesAndPlus<double>(4, 2, 5, DeviceDescriptor::CPUDevice(), 3, true, true, true);
 #ifndef CPUONLY
     TestTimesAndPlus<float>(145, 32, 2, DeviceDescriptor::GPUDevice(0), 10, true, false, true);
@@ -257,9 +253,6 @@ void FeedForwardTests()
     TestFeedForwardNetworkCreation(DeviceDescriptor::GPUDevice(0), true);
     TestFeedForwardNetworkCreation(DeviceDescriptor::GPUDevice(0), false);
 #endif
-
-    // not testing SaveAndReload for now.
-    TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice(), false);
 
     TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice(), false);
     TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice(), true);    

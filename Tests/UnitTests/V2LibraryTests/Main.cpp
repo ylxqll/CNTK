@@ -14,11 +14,9 @@ void TrainLSTMSequenceClassifer();
 void SerializationTests();
 void LearnerTests();
 void TrainSequenceToSequenceTranslator();
-void EvalMultiThreadsTests();
 
 int main()
 {
-
     NDArrayViewTests();
     TensorTests();
     FunctionTests();
@@ -34,8 +32,6 @@ int main()
     TrainLSTMSequenceClassifer();
 
     TrainSequenceToSequenceTranslator();
-
-    EvalMultiThreadsTests();
 
     fprintf(stderr, "\nCNTKv2Library tests: Passed\n");
     fflush(stderr);
