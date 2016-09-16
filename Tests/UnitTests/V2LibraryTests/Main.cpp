@@ -27,7 +27,7 @@ int main()
     TrainerTests();
     SerializationTests();
     LearnerTests();
-    
+
     TestCifarResnet();
     TrainLSTMSequenceClassifer();
 
