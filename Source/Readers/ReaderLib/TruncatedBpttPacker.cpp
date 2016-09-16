@@ -162,13 +162,14 @@ void TruncatedBPTTPacker::StartEpoch(const EpochConfiguration& config, const std
         m_sequenceBufferPerStream.clear();
 
         // Preparing the buffers.
-        for (int i = 0; i < m_outputStreamDescriptions.size(); ++i)
-        {
-            const auto& stream = m_outputStreamDescriptions[i];
-            auto& buffer = m_streamBuffers[m_currentBufferIndex][i];
-            buffer.Resize(m_numParallelSequences * m_truncationSize * GetSampleSize(stream));
-            m_sequenceBufferPerStream.push_back(make_shared<SequenceBuffer>(m_numParallelSequences));
-        }
+        for (int j = 0; j < m_streamBuffers.size(); ++j)
+            for (int i = 0; i < m_outputStreamDescriptions.size(); ++i)
+            {
+                const auto& stream = m_outputStreamDescriptions[i];
+                auto& buffer = m_streamBuffers[j][i];
+                buffer.Resize(m_numParallelSequences * m_truncationSize * GetSampleSize(stream));
+                m_sequenceBufferPerStream.push_back(make_shared<SequenceBuffer>(m_numParallelSequences));
+            }
     }
 
     // Filling in the initial set of sequences
@@ -205,6 +206,8 @@ Minibatch TruncatedBPTTPacker::ReadMinibatch()
         m->m_layout = m_currentLayouts[streamIndex];
         result.m_data.push_back(m);
     }
+
+    m_currentBufferIndex = (m_currentBufferIndex + 1) % m_numberOfBuffers;
 
     return result;
 }

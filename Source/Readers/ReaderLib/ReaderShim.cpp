@@ -23,7 +23,7 @@ namespace Microsoft { namespace MSR { namespace CNTK {
 
 template <class ElemType>
 ReaderShim<ElemType>::ReaderShim(ReaderFactory factory)
-    : m_factory(factory), m_deviceId(CPUDEVICE), m_dataTransferers(2, DataTransfererPtr())
+    : m_factory(factory), m_deviceId(CPUDEVICE), m_dataTransferers(2, DataTransfererPtr()), m_currentDataTransferIndex(0)
 {
 }
 

@@ -52,7 +52,9 @@ static
 GranularGPUDataTransferer::GranularGPUDataTransferer(int deviceId, bool blocking /*= false*/)
     : m_fetchStream(nullptr),
       m_assignStream(nullptr),
-      m_deviceId(deviceId)
+      m_deviceId(deviceId),
+      m_fetchCompleteEvent(nullptr),
+      m_assignCompleteEvent(nullptr)
 {
     PrepareDevice(m_deviceId);
 
