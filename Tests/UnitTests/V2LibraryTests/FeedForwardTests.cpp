@@ -254,5 +254,5 @@ void FeedForwardTests()
     TestFeedForwardNetworkCreation(DeviceDescriptor::GPUDevice(0), false);
 #endif
     TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice(), false);
-    TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice(), true);    
+    TestFeedForwardNetworkCreation(DeviceDescriptor::CPUDevice(), true);
 }
