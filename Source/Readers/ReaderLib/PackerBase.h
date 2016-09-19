@@ -101,7 +101,7 @@ inline void PackerBase::PackSparseSampleAsDense(char* destination, SparseSequenc
     // m_indices stores the corresponding indices for each element. 
     // Iterate through non zero elements and copy from m_data them into the 
     // destination at the offset given by the corresponding row index (m_index).
-    void* buffer = sequence->GetDataBuffer();
+    const void* buffer = sequence->GetDataBuffer();
     for (size_t nonZeroIndex = 0; nonZeroIndex < nonZeroCount; ++nonZeroIndex)
     {
         auto sourceOffset = sampleOffset + nonZeroIndex;

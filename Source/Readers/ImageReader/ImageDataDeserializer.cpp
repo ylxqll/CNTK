@@ -15,25 +15,14 @@
 #include "ConfigUtil.h"
 #include "TimerUtility.h"
 #include "ImageTransformers.h"
+#include "SequenceData.h"
 
 namespace Microsoft { namespace MSR { namespace CNTK {
-
-struct StaticSparseSequenceData : SparseSequenceData
-{
-    void* GetDataBuffer() override
-    {
-        return m_data;
-    }
-
-    void* m_data;
-};
-
-typedef std::shared_ptr<StaticSparseSequenceData> StaticSparseSequenceDataPtr;
 
 class ImageDataDeserializer::LabelGenerator
 {
 public:
-    virtual void CreateLabelFor(size_t classId, StaticSparseSequenceData& data) = 0;
+    virtual void CreateLabelFor(size_t classId, CategorySequenceData& data) = 0;
     virtual ~LabelGenerator() { }
 };
 
@@ -56,7 +45,7 @@ public:
         iota(m_indices.begin(), m_indices.end(), 0);
     }
 
-    virtual void CreateLabelFor(size_t classId, StaticSparseSequenceData& data) override
+    virtual void CreateLabelFor(size_t classId, CategorySequenceData& data) override
     {
         data.m_nnzCounts.resize(1);
         data.m_nnzCounts[0] = 1;
@@ -69,12 +58,6 @@ private:
     TElement m_value;
     vector<IndexType> m_indices;
 };
-
-// Used to keep track of the image. Accessed only using DenseSequenceData interface.
-//struct DeserializedImage : DenseSequenceData
-//{
-//    cv::Mat m_image;
-//};
 
 // For image, chunks correspond to a single image.
 class ImageDataDeserializer::ImageChunk : public Chunk, public std::enable_shared_from_this<ImageChunk>
@@ -110,7 +93,7 @@ public:
             dataType = ElementType::tdouble;
         else
         {
-            // Unsupported image type. Let's convert it to required precision.
+            // Natively unsupported image type. Let's convert it to required precision.
             int requiredType = m_parent.m_precision == ElementType::tfloat ? CV_32F : CV_64F;
             cvImage.convertTo(cvImage, requiredType);
             dataType = m_parent.m_precision;
@@ -128,7 +111,7 @@ public:
         image->m_elementType = dataType;
         result.push_back(image);
 
-        StaticSparseSequenceDataPtr label = std::make_shared<StaticSparseSequenceData>();
+        auto label = std::make_shared<CategorySequenceData>();
         label->m_chunk = shared_from_this();
         m_parent.m_labelGenerator->CreateLabelFor(imageSequence.m_classId, *label);
         label->m_numberOfSamples = 1;
@@ -164,7 +147,9 @@ ImageDataDeserializer::ImageDataDeserializer(CorpusDescriptorPtr corpus, const C
     features->m_id = 0;
     features->m_name = msra::strfun::utf16(featureSection.ConfigName());
     features->m_storageType = StorageType::dense;
-    features->m_elementType = ElementType::tvariant; // Images can be of different type.
+
+    // Due to performance, now we support images of different types.
+    features->m_elementType = ElementType::tvariant;
     m_streams.push_back(features);
 
     // Label stream.
@@ -213,6 +198,7 @@ ImageDataDeserializer::ImageDataDeserializer(const ConfigParameters& config)
     label->m_storageType = StorageType::sparse_csc;
     feature->m_storageType = StorageType::dense;
 
+    // Due to performance, now we support images of different types.
     feature->m_elementType = ElementType::tvariant;
 
     size_t labelDimension = label->m_sampleLayout->GetDim(0);

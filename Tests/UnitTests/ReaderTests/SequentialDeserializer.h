@@ -17,7 +17,7 @@ namespace Microsoft { namespace MSR { namespace CNTK { namespace Test {
 
     struct MockDenseSequenceData : DenseSequenceData
     {
-        void* GetDataBuffer() override
+        const void* GetDataBuffer() override
         {
             return m_data;
         }

@@ -50,12 +50,12 @@ private:
             m_buffer.reserve(capacity);
         }
 
-        std::vector<ElemType> m_buffer;
-
-        void* GetDataBuffer() override
+        const void* GetDataBuffer() override
         {
             return m_buffer.data();
         }
+
+        std::vector<ElemType> m_buffer;
     };
 
     // In case of sparse input, we also need a vector of
@@ -68,7 +68,7 @@ private:
             m_totalNnzCount = 0;
         }
 
-        void* GetDataBuffer() override
+        const void* GetDataBuffer() override
         {
             return m_buffer.data();
         }

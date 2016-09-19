@@ -68,11 +68,11 @@ struct SequenceDataBase
     uint32_t m_numberOfSamples;      // Number of samples in the sequence
 
     ChunkPtr m_chunk;
-    // A non-owned pointer. The actual size is provided for particular sequences,
-    // i.e. see DenseSequenceData, or SparseSequenceData.
-    virtual void* GetDataBuffer() = 0;
+    // Returns a pointer to the data buffer.
+    // The actual size is provided for particular sequences,i.e. see DenseSequenceData, or SparseSequenceData.
+    virtual const void* GetDataBuffer() = 0;
 
-    ElementType m_elementType; // Sequence element type.
+    ElementType m_elementType;     // Sequence element type.
     TensorShapePtr m_sampleLayout; // Sample layout, can be shared by several sequences.
 };
 typedef std::shared_ptr<SequenceDataBase> SequenceDataPtr;

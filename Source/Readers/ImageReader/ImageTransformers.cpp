@@ -14,33 +14,10 @@
 #include "ConcStack.h"
 #include "StringUtil.h"
 #include "ElementTypeUtils.h"
+#include "SequenceData.h"
 
 namespace Microsoft { namespace MSR { namespace CNTK 
 {
-
-ImageTransformerBase::ImageTransformerBase(const ConfigParameters& readerConfig) /*: m_imageElementType(0)*/
-{
-    m_seed = readerConfig(L"seed", 0u);
-    wstring precision = readerConfig(L"precision", L"float");
-    m_precision = AreEqualIgnoreCase(precision, L"float") ? ElementType::tfloat : ElementType::tdouble;
-}
-
-int GetOpenCVTypeFrom(ElementType type)
-{
-    switch (type)
-    {
-    case ElementType::tdouble:
-        return CV_64F;
-    case ElementType::tfloat:
-        return CV_32F;
-    case ElementType::tuchar:
-        return CV_8U;
-    default:
-        RuntimeError("Unsupported element type '%d'", (int)type);
-    }
-
-    return 0;// Make compiler happy.
-}
 
 ElementType GetElementTypeFromOpenCV(int type)
 {
@@ -59,21 +36,6 @@ ElementType GetElementTypeFromOpenCV(int type)
     return ElementType::tvariant;// Make compiler happy.
 }
 
-
-// The method describes how input stream is transformed to the output stream. Called once per applied stream.
-// Currently for image transformations we only support dense streams of type double or float.
-StreamDescription ImageTransformerBase::Transform(const StreamDescription& inputStream)
-{
-    m_inputStream = inputStream;
-    m_outputStream = m_inputStream;
-
-    if (m_inputStream.m_storageType != StorageType::dense)
-    {
-        LogicError("ImageTransformerBase supports only dense input streams.");
-    }
-    return m_outputStream;
-}
-
 // Transforms a single sequence as open cv dense image. Called once per sequence.
 SequenceDataPtr ImageTransformerBase::Transform(SequenceDataPtr sequence)
 {
@@ -81,17 +43,7 @@ SequenceDataPtr ImageTransformerBase::Transform(SequenceDataPtr sequence)
     if (inputSequence == nullptr)
         RuntimeError("Unexpected sequence provided");
 
-    //ImageDimensions dimensions(*inputSequence->m_sampleLayout, HWC);
-    //int columns = static_cast<int>(dimensions.m_width);
-    //int rows = static_cast<int>(dimensions.m_height);
-    //int channels = static_cast<int>(dimensions.m_numChannels);
-
-/*    ElementType elementType = m_inputStream.m_elementType != ElementType::tvariant ?
-        m_inputStream.m_elementType :
-        inputSequence->m_elementType;*/
-
     auto result = std::make_shared<ImageSequenceData>();
-    //int type = CV_MAKETYPE(GetOpenCVTypeFrom(elementType), channels);
     Apply(sequence->m_id, inputSequence->m_image);
 
     result->m_image = inputSequence->m_image;
@@ -340,7 +292,7 @@ ScaleTransformer::ScaleTransformer(const ConfigParameters& config) : ImageTransf
 // Scale transformer transforms the stream so that all samples are of the same size.
 StreamDescription ScaleTransformer::Transform(const StreamDescription& inputStream)
 {
-    ImageTransformerBase::Transform(inputStream);
+    TransformBase::Transform(inputStream);
     m_outputStream.m_sampleLayout = std::make_shared<TensorShape>(ImageDimensions(m_imgWidth, m_imgHeight, m_imgChannels).AsTensorShape(HWC));
     return m_outputStream;
 }
@@ -355,7 +307,9 @@ void ScaleTransformer::Apply(size_t id, cv::Mat &mat)
     auto index = UniIntT(0, static_cast<int>(m_interp.size()) - 1)(*rng);
     assert(m_interp.size() > 0);
 
-    // TODO skip cv::resize depending on interpolation only
+    // Skip cv::resize depending on interpolation only
+    // There is no point in interpolation of the image of the same size, this
+    // will only lower its sharpness.
     if (mat.cols != m_imgWidth || mat.rows != m_imgHeight)
     {
         // If matrix has not been converted to the right type, do it now as rescaling
@@ -409,6 +363,8 @@ void MeanTransformer::Apply(size_t id, cv::Mat &mat)
 
     if (m_meanImg.size() == mat.size())
     {
+        // If matrix has not been converted to the right type, do it now as rescaling
+        // requires floating point type.
         int type = m_precision == ElementType::tfloat ? CV_32F : CV_64F;
         if (mat.type() != type)
             mat.convertTo(mat, type);
@@ -417,31 +373,24 @@ void MeanTransformer::Apply(size_t id, cv::Mat &mat)
     }
 }
 
-TransposeTransformer::TransposeTransformer(const ConfigParameters& config) : m_doubleTransform(this), m_floatTransform(this)
-{
-    wstring precision = config(L"precision", L"float");
-    m_precision = AreEqualIgnoreCase(precision, L"float") ? ElementType::tfloat : ElementType::tdouble;
-}
+TransposeTransformer::TransposeTransformer(const ConfigParameters& config) : TransformBase(config),
+    m_floatTransform(this), m_doubleTransform(this)
+{}
 
 // The method describes how input stream is transformed to the output stream. Called once per applied stream.
 // Transpose transformer expects the dense input stream with samples as HWC and outputs CHW.
 StreamDescription TransposeTransformer::Transform(const StreamDescription& inputStream)
 {
-    m_inputStream = inputStream;
-    if (m_inputStream.m_storageType != StorageType::dense)
-    {
-        LogicError("Transpose transformer supports only dense streams.");
-    }
+    m_outputStream = TransformBase::Transform(inputStream);
 
     // Changing from NHWC to NCHW
-    m_outputStream = m_inputStream;
     m_outputStream.m_elementType = m_precision;
     if (m_inputStream.m_sampleLayout != nullptr)
     {
         ImageDimensions dimensions(*m_inputStream.m_sampleLayout, HWC);
         m_outputStream.m_sampleLayout = std::make_shared<TensorShape>(dimensions.AsTensorShape(CHW));
     }
-    
+
     return m_outputStream;
 }
 
@@ -450,7 +399,7 @@ SequenceDataPtr TransposeTransformer::Transform(SequenceDataPtr sequence)
 {
     auto inputSequence = dynamic_cast<ImageSequenceData*>(sequence.get());
     if (inputSequence == nullptr)
-        RuntimeError("Unexpected sequence provided");
+        RuntimeError("Currently Transpose transform only works with images.");
 
     ElementType elementType = m_inputStream.m_elementType != ElementType::tvariant ?
         m_inputStream.m_elementType :
@@ -473,81 +422,35 @@ SequenceDataPtr TransposeTransformer::Transform(SequenceDataPtr sequence)
             return m_doubleTransform.Apply<unsigned char>(inputSequence);
         if (m_precision == ElementType::tfloat)
             return m_floatTransform.Apply<unsigned char>(inputSequence);
+    default:
+        RuntimeError("Unsupported type. Please apply a cast transform with 'double' or 'float' precision.");
     }
-    RuntimeError("Unsupported type. Please apply a cast transform with 'double' or 'float' precision.");
     return nullptr; // Make compiler happy
 }
-
-// The class represents a sequence that owns an internal data buffer.
-// Passed from the TransposeTransformer.
-// TODO: Transposition potentially could be done in place (alexeyk: performance might be much worse than of out-of-place transpose).
-template<class TElemType>
-struct DenseSequenceWithBuffer : DenseSequenceData
-{
-    std::vector<TElemType> m_buffer;
-    conc_stack<std::vector<TElemType>>& m_memBuffers;
-
-    DenseSequenceWithBuffer(conc_stack<std::vector<TElemType>>& memBuffers) : m_memBuffers(memBuffers) {}
-
-    void* GetDataBuffer() override
-    {
-        return m_buffer.data();
-    }
-
-    ~DenseSequenceWithBuffer()
-    {
-        // Giving the memory back.
-        m_memBuffers.push(std::move(m_buffer));
-    }
-
-    DISABLE_COPY_AND_MOVE(DenseSequenceWithBuffer);
-};
 
 template <class TElementTo>
 template<class TElementFrom>
 SequenceDataPtr TransposeTransformer::TypedTranspose<TElementTo>::Apply(ImageSequenceData* inputSequence)
 {
     TensorShapePtr shape = m_parent->m_inputStream.m_sampleLayout;
-    if (shape == nullptr)
-    {
-        // Taking the shape from the sequence.
+    if (shape == nullptr) // Taking the shape from the sequence.
         shape = inputSequence->m_sampleLayout;
-    }
 
-    if (shape == nullptr)
-    {
+    if (!shape)
         RuntimeError("Unknown shape of the sample in stream '%ls'.", m_parent->m_inputStream.m_name.c_str());
-    }
 
-    //auto& inputSequence = static_cast<DenseSequenceData&>(*sequence);
     assert(inputSequence->m_numberOfSamples == 1);
 
     size_t count = shape->GetNumElements();
-
-    auto result = std::make_shared<DenseSequenceWithBuffer<TElementTo>>(m_memBuffers);
-    result->m_buffer = m_memBuffers.pop_or_create([count]() { return vector<TElementTo>(count); });
-
-    result->m_buffer.resize(count);
+    auto result = std::make_shared<DenseSequenceWithBuffer<TElementTo>>(m_memBuffers, count);
 
     ImageDimensions dimensions(*shape, ImageLayoutKind::HWC);
     size_t rowCount = dimensions.m_height * dimensions.m_width;
     size_t channelCount = dimensions.m_numChannels;
 
-    auto dst = reinterpret_cast<TElementTo*>(result->m_buffer.data());
-    /*
-    int i, j;
-    uchar* p;
-    for (i = 0; i < nRows; ++i)
-    {
-        p = I.ptr<uchar>(i);
-        for (j = 0; j < nCols; ++j)
-        {
-            p[j] = table[p[j]];
-        }
-    }
-    return I;*/
+    auto dst = result->GetBuffer();
 
-    if (channelCount == 3)
+    if (channelCount == 3) // Unrolling for BGR, the most common case.
     {
         size_t nRows = inputSequence->m_image.rows;
         size_t nCols = inputSequence->m_image.cols;
@@ -565,21 +468,12 @@ SequenceDataPtr TransposeTransformer::TypedTranspose<TElementTo>::Apply(ImageSeq
                 *b++ = static_cast<TElementTo>(x[row]);
                 *g++ = static_cast<TElementTo>(x[row + 1]);
                 *r++ = static_cast<TElementTo>(x[row + 2]);
-                //p[j] = table[p[j]];
             }
         }
-        /*
-        for (size_t irow = 0; irow < rowCount; irow++)
-        {
-            auto row = irow * 3;
-            dst[irow] = static_cast<TElementTo>(src[row]);
-            dst[rowCount + irow] = static_cast<TElementTo>(src[row + 1]);
-            dst[2 * rowCount + irow] = static_cast<TElementTo>(src[row + 2]);
-        }*/
     }
     else
     {
-        auto src = reinterpret_cast<TElementFrom*>(inputSequence->GetDataBuffer());
+        auto src = reinterpret_cast<const TElementFrom*>(inputSequence->GetDataBuffer());
         for (size_t irow = 0; irow < rowCount; irow++)
         {
             for (size_t icol = 0; icol < channelCount; icol++)
@@ -592,7 +486,6 @@ SequenceDataPtr TransposeTransformer::TypedTranspose<TElementTo>::Apply(ImageSeq
     result->m_sampleLayout = m_parent->m_outputStream.m_sampleLayout != nullptr ?
         m_parent->m_outputStream.m_sampleLayout :
         std::make_shared<TensorShape>(dimensions.AsTensorShape(CHW));
-    //result->m_data = result->m_buffer.data();
     result->m_numberOfSamples = inputSequence->m_numberOfSamples;
     return result;
 }
@@ -794,26 +687,13 @@ void ColorTransformer::Apply(cv::Mat &mat)
     m_rngs.push(std::move(rng));
 }
 
-CastTransformer::CastTransformer(const ConfigParameters& config) : m_doubleTransform(this), m_floatTransform(this)
+CastTransformer::CastTransformer(const ConfigParameters& config) : TransformBase(config), m_floatTransform(this), m_doubleTransform(this)
 {
-    wstring precision = config(L"precision", L"float");
-    if (AreEqualIgnoreCase(precision, L"float"))
-        m_precision = ElementType::tfloat;
-    else if (AreEqualIgnoreCase(precision, L"double"))
-        m_precision = ElementType::tdouble;
-    else
-        RuntimeError("Unsupported type. Please apply a cast transform with 'double' or 'float' precision.");
 }
 
 StreamDescription CastTransformer::Transform(const StreamDescription& inputStream)
 {
-    m_inputStream = inputStream;
-    if (m_inputStream.m_storageType != StorageType::dense)
-    {
-        LogicError("Cast transform only supports dense streams.");
-    }
-
-    m_outputStream = m_inputStream;
+    m_outputStream = TransformBase::Transform(inputStream);
     m_outputStream.m_elementType = m_precision;
     return m_outputStream;
 }
@@ -827,7 +707,7 @@ SequenceDataPtr CastTransformer::Transform(SequenceDataPtr sequence)
     }
 
     SequenceDataPtr result;
-    ElementType inputType = m_inputStream.m_elementType != ElementType::tvariant 
+    ElementType inputType = m_inputStream.m_elementType != ElementType::tvariant
         ? m_inputStream.m_elementType 
         : sequence->m_elementType;
 
@@ -861,26 +741,18 @@ template<class TElementFrom>
 SequenceDataPtr CastTransformer::TypedCast<TElementTo>::Apply(SequenceDataPtr sequence)
 {
     TensorShapePtr shape = m_parent->m_inputStream.m_sampleLayout;
-    if (shape == nullptr)
-    {
-        // Taking the shape from the sequence.
+    if (!shape) // Taking the shape from the sequence.
         shape = sequence->m_sampleLayout;
-    }
 
-    if (shape == nullptr)
-    {
+    if (!shape)
         RuntimeError("Unknown shape of the sample in stream '%ls'.", m_parent->m_inputStream.m_name.c_str());
-    }
 
     auto& inputSequence = static_cast<DenseSequenceData&>(*sequence);
     size_t count = shape->GetNumElements() * sequence->m_numberOfSamples;
-    auto result = std::make_shared<DenseSequenceWithBuffer<TElementTo>>(m_memBuffers);
-    result->m_buffer = m_memBuffers.pop_or_create([count]() { return vector<TElementTo>(count); });
+    auto result = std::make_shared<DenseSequenceWithBuffer<TElementTo>>(m_memBuffers, count);
 
-    result->m_buffer.resize(count);
-
-    auto src = reinterpret_cast<TElementFrom*>(inputSequence.GetDataBuffer());
-    auto dst = reinterpret_cast<TElementTo*>(result->m_buffer.data());
+    auto src = reinterpret_cast<const TElementFrom*>(inputSequence.GetDataBuffer());
+    auto dst = result->GetBuffer();
 
     for (size_t i = 0; i < count; i++)
     {
@@ -888,7 +760,6 @@ SequenceDataPtr CastTransformer::TypedCast<TElementTo>::Apply(SequenceDataPtr se
     }
 
     result->m_sampleLayout = shape;
-    //result->m_data = result->m_buffer.data();
     result->m_numberOfSamples = inputSequence.m_numberOfSamples;
     return result;
 }

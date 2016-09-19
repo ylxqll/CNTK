@@ -9,9 +9,11 @@
 #include <limits>
 #include "MLFDataDeserializer.h"
 #include "ConfigHelper.h"
+#include "SequenceData.h"
 #include "../HTKMLFReader/htkfeatio.h"
 #include "../HTKMLFReader/msra_mgram.h"
 #include "latticearchive.h"
+
 
 #undef max // max is defined in minwindef.h
 
@@ -95,18 +97,6 @@ MLFDataDeserializer::MLFDataDeserializer(CorpusDescriptorPtr corpus, const Confi
     InitializeChunkDescriptions(corpus, config, labelMappingFile, dimension);
     InitializeStream(name, dimension);
 }
-
-struct StaticSparseSequenceData : SparseSequenceData
-{
-    void* GetDataBuffer() override
-    {
-        return m_data;
-    }
-
-    void *m_data;
-};
-
-typedef std::shared_ptr<StaticSparseSequenceData> StaticSparseSequenceDataPtr;
 
 // Currently we create a single chunk only.
 void MLFDataDeserializer::InitializeChunkDescriptions(CorpusDescriptorPtr corpus, const ConfigHelper& config, const wstring& stateListPath, size_t dimension)
@@ -213,7 +203,7 @@ void MLFDataDeserializer::InitializeChunkDescriptions(CorpusDescriptorPtr corpus
     m_categoryIndices.reserve(dimension);
     for (size_t i = 0; i < dimension; ++i)
     {
-        StaticSparseSequenceDataPtr category = make_shared<StaticSparseSequenceData>();
+        auto category = make_shared<CategorySequenceData>();
         m_categoryIndices.push_back(static_cast<IndexType>(i));
         category->m_indices = &(m_categoryIndices[i]);
         category->m_nnzCounts.resize(1);
@@ -297,7 +287,7 @@ struct MLFSequenceData : SparseSequenceData
         m_indices = m_indicesPtr.get();
     }
 
-    void* GetDataBuffer() override
+    const void* GetDataBuffer() override
     {
         return m_values.data();
     }

@@ -422,7 +422,7 @@ struct HTKFloatSequenceData : DenseSequenceData
         }
     }
 
-    void* GetDataBuffer() override
+    const void* GetDataBuffer() override
     {
         return m_buffer.GetData();
     }
@@ -443,7 +443,7 @@ struct HTKDoubleSequenceData : DenseSequenceData
         }
     }
 
-    void* GetDataBuffer() override
+    const void* GetDataBuffer() override
     {
         return m_buffer.data();
     }

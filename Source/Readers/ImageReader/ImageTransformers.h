@@ -8,26 +8,28 @@
 #include <unordered_map>
 #include <random>
 #include <opencv2/opencv.hpp>
+#include <boost/random/uniform_int_distribution.hpp>
+#include <boost/random/uniform_real_distribution.hpp>
 
 #include "Transformer.h"
 #include "ConcStack.h"
 #include "Config.h"
 #include "ImageConfigHelper.h"
-#include <boost/random/uniform_int_distribution.hpp>
-#include <boost/random/uniform_real_distribution.hpp>
+#include "TransformBase.h"
 
 namespace Microsoft { namespace MSR { namespace CNTK {
 
+// Sequence data that is used for images.
 struct ImageSequenceData : DenseSequenceData
 {
     cv::Mat m_image;
-    // In case we do not copy data - we have to preserve the original sequence.
-    //SequenceDataPtr m_original;
 
-    void* GetDataBuffer() override
+    const void* GetDataBuffer() override
     {
         if (!m_image.isContinuous())
         {
+            // According to the contract, dense sequence data 
+            // should return continuous data buffer.
             m_image = m_image.clone();
         }
 
@@ -39,26 +41,16 @@ class ConfigParameters;
 
 // Base class for image transformations based on OpenCV
 // that helps to wrap the sequences into OpenCV::Mat class.
-class ImageTransformerBase : public Transformer
+class ImageTransformerBase : public TransformBase
 {
 public:
-    explicit ImageTransformerBase(const ConfigParameters& config);
-
-    void StartEpoch(const EpochConfiguration&) override {}
-
-    // Transformation of the stream.
-    StreamDescription Transform(const StreamDescription& inputStream) override;
+    explicit ImageTransformerBase(const ConfigParameters& config) : TransformBase(config)
+    {};
 
     // Transformation of the sequence.
     SequenceDataPtr Transform(SequenceDataPtr sequence) override;
 
 protected:
-    // Seed  getter.
-    unsigned int GetSeed() const
-    {
-        return m_seed;
-    }
-
     using Base = Transformer;
     using UniRealT = boost::random::uniform_real_distribution<double>;
     using UniIntT = boost::random::uniform_int_distribution<int>;
@@ -66,12 +58,6 @@ protected:
     // The only function that should be redefined by the inherited classes.
     virtual void Apply(size_t id, cv::Mat &from) = 0;
 
-protected:
-    StreamDescription m_inputStream;
-    StreamDescription m_outputStream;
-    unsigned int m_seed;
-    //int m_imageElementType;
-    ElementType m_precision;
     conc_stack<std::unique_ptr<std::mt19937>> m_rngs;
 };
 
@@ -144,11 +130,10 @@ private:
 };
 
 // Transpose transformation from HWC to CHW (note: row-major notation).
-class TransposeTransformer : public Transformer
+class TransposeTransformer : public TransformBase
 {
 public:
     explicit TransposeTransformer(const ConfigParameters&);
-    void StartEpoch(const EpochConfiguration&) override {}
 
     // Transformation of the stream.
     StreamDescription Transform(const StreamDescription& inputStream) override;
@@ -157,10 +142,7 @@ public:
     SequenceDataPtr Transform(SequenceDataPtr sequence) override;
 
 private:
-    StreamDescription m_inputStream;
-    StreamDescription m_outputStream;
-    ElementType m_precision;
-
+    // A helper class transposes images using a set of typed memory buffers.
     template <class TElementTo>
     struct TypedTranspose
     {
@@ -173,7 +155,10 @@ private:
         conc_stack<std::vector<TElementTo>> m_memBuffers;
     };
 
+    // Auxiliary buffer to handle images of float type.
     TypedTranspose<float> m_floatTransform;
+
+    // Auxiliary buffer to handle images of double type.
     TypedTranspose<double> m_doubleTransform;
 };
 
@@ -228,13 +213,15 @@ private:
     conc_stack<std::unique_ptr<cv::Mat>> m_hsvTemp;
 };
 
-// Cast the input to a particular type if requested.
-class CastTransformer : public Transformer
+// Cast the input to a particular type.
+// Images coming from the deserializer/transformers could come in different types,
+// i.e. as a uchar dur to performance reasons. On the other hand, the packer/network
+// currently only supports float and double. This transform is necessary to do a proper
+// casting before the sequence data enters the packer.
+class CastTransformer : public TransformBase
 {
 public:
     explicit CastTransformer(const ConfigParameters&);
-
-    void StartEpoch(const EpochConfiguration&) override {}
 
     // Transformation of the stream.
     StreamDescription Transform(const StreamDescription& inputStream) override;
@@ -243,6 +230,8 @@ public:
     SequenceDataPtr Transform(SequenceDataPtr sequence) override;
 
 private:
+
+    // A helper class casts images using a set of typed memory buffers.
     template <class TElementTo>
     struct TypedCast
     {
@@ -257,10 +246,6 @@ private:
 
     TypedCast<float> m_floatTransform;
     TypedCast<double> m_doubleTransform;
-
-    StreamDescription m_inputStream;
-    StreamDescription m_outputStream;
-    ElementType m_precision;
 };
 
 
