@@ -24,10 +24,6 @@
 #pragma warning(disable : 4239) // nonstandard extension; triggered by this pattern: "auto& second = transposeB ? b.m_GPUMatrix->Transpose() : *b.m_GPUMatrix;"
 #pragma warning(disable : 4702) // unreachable code; triggered for unknown reasons
 
-#ifndef min
-#define min(a, b) (((a) < (b)) ? (a) : (b))
-#endif
-
 // Helper to dispath matrix calls to the 4 underlying matrix libraries (CPU,GPU) x (DENSE,SPARSE)
 // 'MatrixPointerToCheck' determines where the operation takes place.
 // 'MatrixPointerToSetFlag' is the output. If not null and its location is BOTH, we collapse it to one.
@@ -436,11 +432,11 @@ Matrix<ElemType>::Matrix(const size_t numRows, const size_t numCols, ElemType* p
         }
     }
 
-	// Why is this here??
+    // Why is this here??
     /*
     if (matrixFlagDontOwnBuffer & matrixFlags)
         m_baseMatrix->SetOwnBuffer(false);
-		*/
+        */
 }
 
 //copy constructor, deep copy
@@ -1516,22 +1512,30 @@ ElemType Matrix<ElemType>::Adagrad(Matrix<ElemType>& gradients, const bool needA
     // Note: Since both 'this' and gradients are changed, we must call SetDataLocation() on 'this' as well.
 }
 
+// FSAdaGrad update -- Frank's "fix" of AdaGrad, very similar to what became later known as Adam
+// updates
+//  - momentum accumulator
+//  - var momentum accumulator
+//  - denominator
+// then
+//  - the model itself
 template <class ElemType>
-void Matrix<ElemType>::FSAdagrad(size_t mbSize, Matrix<ElemType>& gradients, Matrix<ElemType>& functionValues, const ElemType learnRatePerSample, const ElemType momentum)
+void Matrix<ElemType>::FSAdagradUpdate(size_t mbSize,
+                                       Matrix<ElemType>& gradients, Matrix<ElemType>& functionValues, double& smoothedCount,
+                                       const double learnRatePerSample, const double targetAdagradAvDenom,
+                                       const double meanMomentum, const double varMomentum)
 {
-    // TODO: The values of 'adagradT' and 'targetadagradavdenom' are currently hardcoded constants taken from DBN (empirically determined).
-    // These should be made configurable if needed
-    const size_t adagradT = 2 * 3600 * 100;
-    const ElemType targetadagradavdenom = 0.0025; // 1/400 magic constant
-    const ElemType adagradkeepweight = static_cast<ElemType>(exp(-1.0 * mbSize / adagradT));
+    // keep track on how many samples have been accumulated into the g^2 accumulator
+    smoothedCount = varMomentum * smoothedCount + (1.0 - varMomentum) * mbSize;
 
-    static ElemType aggadagradsqrframes = 0;
-    aggadagradsqrframes = adagradkeepweight * aggadagradsqrframes + (1.0f - adagradkeepweight) * mbSize;
-    const ElemType targetadagradavdenom_x_sqrtadagradsqrframes = static_cast<ElemType>(targetadagradavdenom * sqrt(aggadagradsqrframes));
-
+    // update the numerator and then do the meanMomentum-based model update
+    // Each AdaGrad-normalized gradient value is multiplied by the following, which
+    //  - makes up for general scaling (targetAdagradAvDenom, a constant chosen by the user that should resemble the typical value range of gradients)
+    //  - sqrt(1/#samples accumulated) to turn the sqr sum into an average
+    let targetAdagradAvDenom_x_sqrtAdagradSqrFrames = (ElemType)(targetAdagradAvDenom * sqrt(smoothedCount));
     DISPATCH_MATRIX_ON_FLAG(&gradients, &gradients,
-        { m_CPUMatrix->FSAdagrad(*gradients.m_CPUMatrix, *functionValues.m_CPUMatrix, learnRatePerSample, momentum, adagradkeepweight, targetadagradavdenom_x_sqrtadagradsqrframes); SetDataLocation(CPU); },
-        { m_GPUMatrix->FSAdagrad(*gradients.m_GPUMatrix, *functionValues.m_GPUMatrix, learnRatePerSample, momentum, adagradkeepweight, targetadagradavdenom_x_sqrtadagradsqrframes); SetDataLocation(GPU); },
+        { m_CPUMatrix->FSAdagrad(*gradients.m_CPUMatrix, *functionValues.m_CPUMatrix, (ElemType)learnRatePerSample, (ElemType)meanMomentum, (ElemType)varMomentum, targetAdagradAvDenom_x_sqrtAdagradSqrFrames); SetDataLocation(CPU); },
+        { m_GPUMatrix->FSAdagrad(*gradients.m_GPUMatrix, *functionValues.m_GPUMatrix, (ElemType)learnRatePerSample, (ElemType)meanMomentum, (ElemType)varMomentum, targetAdagradAvDenom_x_sqrtAdagradSqrFrames); SetDataLocation(GPU); },
         { NOT_IMPLEMENTED; },
         { NOT_IMPLEMENTED; });
     // Note: Since both 'this' and gradients are changed, we must call SetDataLocation() on 'this' as well.

@@ -228,9 +228,9 @@ namespace CNTK
 
         return clonedFunction->Outputs()[outputVarIndex];
     }
-
     FunctionPtr Function::ReplacePlaceholders(const std::unordered_map<Variable, Variable>& placeholderReplacements)
     {
+
         std::unordered_set<const Function*> visitedFunctions;
         std::unordered_set<Variable> replacedPlaceholders;
         ReplacePlaceholdersInPlace(placeholderReplacements, visitedFunctions, replacedPlaceholders);
@@ -271,7 +271,7 @@ namespace CNTK
                 placeholderReplacements[clonedInput] = replacements.at(cloneeInput);
             }
             else
-            {
+                {
                 // This is not a replacement. Lets create a fresh clone
                 if (cloneeInput.IsInput() || cloneeInput.IsConstant() || cloneeInput.IsPlaceholder())
                 {
@@ -295,8 +295,8 @@ namespace CNTK
                         break;
                     default:
                         LogicError("Unknown ParameterCloningMethod");
-                    }
-                }
+            }
+        }
                 else
                 {
                     assert(cloneeInput.IsOutput());
@@ -660,6 +660,7 @@ namespace CNTK
             assert(inputs.size() == 2);
             Variable inputOperandVar = inputs[0];
             Variable initialStateVar = inputs[1];
+
             // TODO: Current we only support a scalar initial state
             if (!initialStateVar.IsConstant() || (initialStateVar.Shape().Rank() > 0))
                 LogicError("Currently PastValue/FutureValue Function only supports scalar initial state");
@@ -960,8 +961,8 @@ namespace CNTK
     // Replace any PlaceHolder Variables in the graph of Functions underlying 'this' CompositeFunction. All PlaceHolder variables
     // should have been replaced before performing any Forward compute of 'this' Function.
     /*virtual*/ void CompositeFunction::ReplacePlaceholdersInPlace(const std::unordered_map<Variable, Variable>& placeholderReplacements,
-                                                                   std::unordered_set<const Function*>& visitedFunctions,
-                                                                   std::unordered_set<Variable>& replacedPlaceholders)
+                                                            std::unordered_set<const Function*>& visitedFunctions,
+                                                            std::unordered_set<Variable>& replacedPlaceholders)
     {
         RootFunction()->ReplacePlaceholdersInPlace(placeholderReplacements, visitedFunctions, replacedPlaceholders);
 
@@ -1240,6 +1241,7 @@ namespace CNTK
             ElementType initStateValue;
             NDArrayView tempView({}, &initStateValue, 1, DeviceDescriptor::CPUDevice());
             tempView.CopyFrom(*(Constant(initialStateVar).Value()));
+
             size_t offset = primitiveFunction->Attributes()[PrimitiveFunction::AttributeNameOffset].Value<size_t>();
             if (op == PrimitiveOpType::PastValue)
                 computationNodePtr = New<PastValueNode<ElementType>>(network->GetDeviceId(), functionName, (float)initStateValue, AsTensorShape(inputOperandVar.Shape()), offset);
@@ -1304,6 +1306,8 @@ namespace CNTK
         ReorderAsCNTKComputationNodeInputs(op, inputNodesBasePtrs);
         if (computationNodePtr->Is<INumInputs>())
             inputNodesBasePtrs.resize(computationNodePtr->As<INumInputs>()->GetExpectedNumInputs());
+        else if ((op == PrimitiveOpType::PastValue) || (op == PrimitiveOpType::FutureValue)) // TODO: Temporary hack to be replaced with support for non-scalar ininital state value operands
+            inputNodesBasePtrs.resize(1);
 
         network->AddNodeToNetAndAttachInputs(computationNodePtr, inputNodesBasePtrs);
 
@@ -1463,8 +1467,7 @@ namespace CNTK
             }
 
             if (allocateNetworkMatrices)
-                m_computationNetwork->AllocateAllMatrices(forwardRootNodes, {}, backpropRootNode);
-
+            m_computationNetwork->AllocateAllMatrices(forwardRootNodes, {}, backpropRootNode);
             m_networkMatricesAllocated = allocateNetworkMatrices;
         }
 
