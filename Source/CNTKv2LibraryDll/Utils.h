@@ -366,4 +366,51 @@ namespace CNTK
         double* castValue = Copy<float, double>(source->DataBuffer<float>(), sourceSize);
         return MakeSharedObject<NDArrayView>(sourceShape, castValue, sourceSize, DeviceDescriptor::CPUDevice(), readOnly);
     }
+
+    // TODO: refactor, move into ISerializable?
+    const std::wstring modelVersionKey = L"model_version";
+    const std::wstring typeKey = L"type";
+    const std::wstring uidKey = L"uid";
+    const std::wstring kindKey = L"kind";
+    const std::wstring dataTypeKey = L"data_type";
+    const std::wstring dynamicAxisKey = L"dynamic_axis";
+    const std::wstring isSparseKey = L"is_sparse";
+    const std::wstring nameKey = L"name";
+    const std::wstring needsGradientKey = L"needs_gradient";
+    const std::wstring shapeKey = L"shape";
+    const std::wstring valueKey = L"value";
+    const std::wstring opKey = L"op";
+    const std::wstring attributesKey = L"attributes";
+    const std::wstring inputsKey = L"inputs";
+    const std::wstring rootKey = L"root";
+    const std::wstring functionsKey = L"primitive_functions";
+
+    inline std::wstring GetModelVersionsString(size_t currentVersion, size_t dictVersion)
+    {
+        std::wstringstream info;
+        info << L"current model version = " << currentVersion 
+             << L", model version in the dictionary = " << dictVersion;
+        return info.str();
+    }
+
+    // Make sure that the dictionary contains all required keys, and if it does, return model version value
+    // from the dictionary.
+    inline size_t ValidateModelDictionary(const Dictionary& dict, const vector<std::wstring> requiredKeys, size_t currentModelVersion)
+    {
+        if (!dict.Contains(modelVersionKey))
+        {
+             LogicError("Required key '%ls' is not found in the dictionary.", modelVersionKey);
+        } 
+        const auto& version = dict[modelVersionKey].Value<size_t>();
+
+        for (const auto& key : requiredKeys)
+        {
+            if (!dict.Contains(key))
+            {
+                 LogicError("Required key '%ls' is not found in the dictionary "
+                            "(%ls).", key, GetModelVersionsString(currentModelVersion, version));
+            }
+        }
+        return version;
+    }      
 }

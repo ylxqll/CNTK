@@ -918,9 +918,19 @@ namespace CNTK
 
     namespace Internal
     {
+        inline std::wstring GenerateUid(std::wstring&& prefix)
+        {
+            return prefix + std::to_wstring(Internal::NewUniqueId());
+        }
+
         inline std::wstring GenerateUid(VariableKind varKind)
         {
-            return std::wstring(VariableKindName(varKind)) + std::to_wstring(Internal::NewUniqueId());
+            return GenerateUid(std::wstring(VariableKindName(varKind)));
+        }
+
+        inline std::wstring GenerateUid(wchar_t* prefix)
+        {
+            return GenerateUid(std::wstring(prefix));
         }
     }
 
@@ -1032,7 +1042,7 @@ namespace CNTK
         const std::wstring& Uid() const { return m_dataFields->m_uid; }
 
         ///
-        /// Returns the Function object which 'this' variable is an ouptut of.
+        /// Returns the Function object which 'this' variable is an output of.
         /// Returns null when called for a Variable that is not of 'Output' VariableKind.
         ///
         CNTK_API FunctionPtr Owner() const;
@@ -1047,6 +1057,15 @@ namespace CNTK
         ///
         bool NeedsGradient() const { return m_dataFields->m_needsGradient; }
 
+        ///
+        /// Serializes 'this' variable into a Dictionary.
+        ///
+        CNTK_API Dictionary Save() const;
+
+        ///
+        /// Restores a variable from a Dictionary.
+        ///
+        CNTK_API static Variable Load(const Dictionary& dictionary);
     protected:
 #ifdef SWIG
     public:
@@ -1140,6 +1159,8 @@ namespace CNTK
         typedef std::shared_ptr<VariableFields> VariableFieldsPtr;
 
         VariableFieldsPtr m_dataFields;
+
+        static const size_t modelVersion = 1;
     };
 
     inline bool operator==(const Variable& first, const Variable& second)
@@ -1985,15 +2006,32 @@ namespace CNTK
         ///
         /// Destruct this Function.
         ///
-        virtual ~Function() {}
+        CNTK_API virtual ~Function();
 
         CNTK_API FunctionPtr Clone(ParameterCloningMethod parameterCloneMethod = ParameterCloningMethod::Clone, const std::unordered_map<Variable, Variable>& replacements = {}) const;
+
+        ///
+        /// Serializes the Function graph underlying this Function.
+        ///
+        CNTK_API static Dictionary Save(FunctionPtr rootFunction);
+
+        ///
+        /// Loads a Function from the dictionary.
+        /// TODO: add a second overload with a 'function builder' parameter that would allow hooking
+        /// user-defined op-codes with custom functionality.
+        ///
+        CNTK_API static FunctionPtr Load(const Dictionary& modelDictionary);
 
     public:
         ///
         /// Returns the name of 'this' variable.
         ///
         const std::wstring& Name() const { return m_name; }
+
+        ///
+        /// Returns the internally generated unique name of the function
+        ///
+        const std::wstring& Uid() const { return m_uid; }
 
         ///
         /// Returns the primitive Function at the root of the graph of Functions underlying this Function.
@@ -2112,38 +2150,22 @@ namespace CNTK
 
     protected:
         ///
-        /// Protected constructor for derived 'Function' types to specify the actual input and output variables for the Function instance.
+        /// Protected constructor for derived 'Function' types to specify the actual input and output variables for the (primitive) Function instance.
         ///
-        Function(const std::vector<Variable>& inputs, const std::vector<Variable>& outputs, Dictionary&& functionConfig, const FunctionPtr& rootFunction = nullptr, const std::wstring& name = L"")
-            : m_rootFunction(rootFunction), m_name(name), m_attributes(std::move(functionConfig))
+        Function(const std::vector<Variable>& inputs, const std::vector<Variable>& outputs, Dictionary&& functionConfig, const std::wstring& name = L"", const std::wstring uid = Internal::GenerateUid(L"UserDefinedFunction"))
+            : Function(inputs, outputs, std::move(functionConfig), nullptr, name, uid)
         {
-            for (auto inputVar : inputs)
-            {
-                m_inputs.push_back(inputVar);
-
-                if (!inputVar.IsInput() &&
-                    !inputVar.IsOutput() &&
-                    !inputVar.IsParameter() &&
-                    !inputVar.IsConstant() &&
-                    !inputVar.IsPlaceholder())
-                {
-                    InvalidArgument("Function input has invalid VariableKind!");
-                }
-            }
-
-            std::unordered_set<Variable> uniqueOutputs;
-            for (auto outputVar : outputs)
-            {
-                if (uniqueOutputs.find(outputVar) != uniqueOutputs.end())
-                    RuntimeError("Same variable appears multiple times in the outputs vector passed to Function constructor");
-
-                m_outputs.push_back(outputVar);
-                uniqueOutputs.insert(outputVar);
-            }
         }
+
+        ///
+        /// Protected 'Save' that allows derived 'Function' types to specify custom serialization procedure.
+        ///
+        CNTK_API virtual Dictionary Save() const = 0;
 
     private:
         void RestoreFromLegacyModel(const std::wstring& modelFilePath);
+
+        CNTK_API Function(const std::vector<Variable>& inputs, const std::vector<Variable>& outputs, Dictionary&& functionConfig, const FunctionPtr& rootFunction, const std::wstring& name, const std::wstring& uid);
 
     private:
 
@@ -2152,6 +2174,7 @@ namespace CNTK
 
         FunctionPtr m_rootFunction; // nullptr for primitive function instances
         std::wstring m_name;
+        std::wstring m_uid;
         Dictionary m_attributes;
     };
 

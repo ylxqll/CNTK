@@ -288,7 +288,7 @@ namespace CNTK
         {
             if (checkpoint.Contains(parameter.Uid()))
             {
-                LogicError("Parameter names must be unique");
+                LogicError("Parameter uids must be unique");
             }
 
             const auto& smoothedGradientValue = m_smoothedGradientValues.at(parameter);

@@ -34,6 +34,42 @@ namespace CNTK
 
         return std::shared_ptr<std::vector<Variable>>(new std::vector<Variable>(std::move(inputs)), [](std::vector<Variable>* ptr) { delete ptr; });
     }
+    
+    Function::Function(const std::vector<Variable>& inputs, const std::vector<Variable>& outputs, Dictionary&& functionConfig, const FunctionPtr& rootFunction, const std::wstring& name, const std::wstring& uid)
+        : m_rootFunction(rootFunction), m_name(name), m_uid(uid), m_attributes(std::move(functionConfig))
+    {
+        for (auto inputVar : inputs)
+        {
+            m_inputs.push_back(inputVar);
+
+            if (!inputVar.IsInput() &&
+                !inputVar.IsOutput() &&
+                !inputVar.IsParameter() &&
+                !inputVar.IsConstant() &&
+                !inputVar.IsPlaceholder())
+            {
+                InvalidArgument("Function input has invalid VariableKind!");
+            }
+        }
+
+        std::unordered_set<Variable> uniqueOutputs;
+        for (auto outputVar : outputs)
+        {
+            if (uniqueOutputs.find(outputVar) != uniqueOutputs.end())
+                RuntimeError("Same variable appears multiple times in the outputs vector passed to Function constructor");
+
+            if (m_rootFunction == nullptr && outputVar.IsOutput())
+            {
+                // in case of a primitive function, set uid of output vars to owner function uid + "_Output_" + output index.
+                outputVar.m_dataFields->m_uid = m_uid + L"_" + VariableKindName(outputVar.Kind()) + L"_" + std::to_wstring(m_outputs.size());
+            }
+
+            m_outputs.push_back(outputVar);
+            uniqueOutputs.insert(outputVar);
+        }
+    }
+
+    /*virtual*/ Function::~Function() {}
 
     // Placeholders can be replaced incrementally - i.e. not all placeholders need to replaced in one go.
     // The only requirement is that they must all be replaced before making any 'Forward' calls on the Function instance.
@@ -368,6 +404,20 @@ namespace CNTK
         return clonedComposite;
     }
 
+    /*static*/ Dictionary Save(FunctionPtr rootFunction)
+    {
+        CompositeFunction* compositeFunction = dynamic_cast<CompositeFunction*>(rootFunction.get());
+        if (compositeFunction == nullptr)
+            InvalidArgument("Primitive (aka non-composite) Function instances cannot be saved");
+
+        return compositeFunction->Save();
+    }
+
+    /*static*/ FunctionPtr Load(const Dictionary& modelDictionary)
+    {
+        return CompositeFunction::Load(modelDictionary);
+    }
+
     // Names for the reduction operations as used by the CNTK ReduceElementsNode
     /*static*/ const std::wstring PrimitiveFunction::InternalSumReductionOpName = L"Sum";
     /*static*/ const std::wstring PrimitiveFunction::InternalLogSumReductionOpName = L"LogSum";
@@ -417,7 +467,7 @@ namespace CNTK
             outputDataType = inputs[i++].GetDataType();
 
         if (outputDataType == DataType::Unknown)
-            InvalidArgument("The DataType of all the input operands of primitive function with op type %s are unknown", PrimitiveOpTypeName(op));
+            InvalidArgument("The DataType of all the input operands of primitive function with op type %S are unknown", PrimitiveOpTypeName(op));
 
         // We currently require that the inputs' dynamic axes if any match
         std::vector<Axis> outputDynamicAxes;
@@ -590,12 +640,12 @@ namespace CNTK
             assert(inputs.size() == 2);
 
             if ((inputs[0].Shape().Rank() > 2) || ((inputs[0].Shape().Rank() > 1) && (inputs[0].Shape()[1] != 1)))
-                InvalidArgument("The shape of input operands for the %s operation should have at most one axis", PrimitiveOpTypeName(op));
+                InvalidArgument("The shape of input operands for the %S operation should have at most one axis", PrimitiveOpTypeName(op));
 
             auto predictionShape = inputs[0].Shape();
             auto labelsShape = inputs[1].Shape();
             if (predictionShape != labelsShape)
-                RuntimeError("Prediction output operand's shape %S is incompatible with label operand's shape %S for the %s operation", AsStringForErrorReporting(predictionShape).c_str(), AsStringForErrorReporting(labelsShape).c_str(), PrimitiveOpTypeName(op));
+                RuntimeError("Prediction output operand's shape %S is incompatible with label operand's shape %S for the %S operation", AsStringForErrorReporting(predictionShape).c_str(), AsStringForErrorReporting(labelsShape).c_str(), PrimitiveOpTypeName(op));
 
             std::vector<size_t> reductionAxes;
             for (size_t i = 0; i < inputs[0].Shape().Rank(); ++i)
@@ -681,11 +731,223 @@ namespace CNTK
             break;
         }
         default:
-            LogicError("Specified op %s not yet supported", PrimitiveOpTypeName(op));
+            LogicError("Specified op %S not yet supported", PrimitiveOpTypeName(op));
             break;
         }
 
-        return{ OutputVariable(outputShape, outputDataType, owner, outputDynamicAxes) };
+        return { OutputVariable(outputShape, outputDataType, owner, outputDynamicAxes) };
+    }
+
+    static const std::wstring s_primitiveFunctionTypeValue = L"PrimitiveFunction";
+
+    /*virtual*/ Dictionary PrimitiveFunction::Save() const 
+    {
+        Dictionary dict;
+
+        dict[modelVersionKey] = modelVersion;
+        dict[typeKey] = s_primitiveFunctionTypeValue;
+        dict[opKey] = static_cast<size_t>(m_op);
+        dict[attributesKey] = Attributes();
+        dict[uidKey] = Uid();
+        dict[nameKey] = Name();
+        
+        auto inputs = Inputs();
+        vector<DictionaryValue> inputUids(inputs.size());
+        for (auto& input : inputs)
+        {
+            inputUids.push_back(input.Uid());
+        }
+
+        dict[inputsKey] = std::move(inputUids);
+
+        return dict;
+    }
+
+    /*static*/ FunctionPtr PrimitiveFunction::Load(const Dictionary& dict, const std::unordered_map<std::wstring, Variable>& uidToVariableMap)
+    {
+        static const vector<std::wstring> s_requiredDictionaryKeys = { typeKey, opKey, uidKey, attributesKey, inputsKey, nameKey };
+       
+        size_t version = ValidateModelDictionary(dict, s_requiredDictionaryKeys, modelVersion);
+        
+        const auto& type = dict[typeKey].Value<std::wstring>();
+        if (type != s_primitiveFunctionTypeValue) 
+        {
+            LogicError("Unexpected '%ls':'%ls' in place of 'type':'%ls' "
+                        "(%ls).", typeKey, type, typeKey, s_primitiveFunctionTypeValue,
+                        GetModelVersionsString(modelVersion, version));
+        }
+
+        PrimitiveOpType op = PrimitiveOpType(dict[opKey].Value<std::size_t>());
+
+        // TODO: we need some mechanism to ensure that new op type values 
+        // are only added to the end of the list, after Combine. This also
+        // applies to other enums (DataType, VariableKind, etc.)
+        if (op > PrimitiveOpType::Combine)
+        {
+            LogicError("Unexpected variable '%ls':'%zu' "
+                        "(%ls).", opKey, op, GetModelVersionsString(modelVersion, version));
+        }
+
+        const auto& uid = dict[uidKey].Value<std::wstring>();
+        const auto& name = dict[nameKey].Value<std::wstring>();
+        auto& attributes = dict[attributesKey].Value<Dictionary>();
+        const auto& inputUids = dict[inputsKey].Value<vector<DictionaryValue>>();
+
+        std::vector<Variable> inputs(inputUids.size());
+
+        for (const auto& dictionaryValue : inputUids)
+        {
+            const auto& inputUid = dictionaryValue.Value<std::wstring>();
+            if (uidToVariableMap.find(inputUid) == uidToVariableMap.end())
+            {
+                LogicError("There are no input corresponging to input uid = '%ls' "
+                        "(%ls).", inputUid, GetModelVersionsString(modelVersion, version));
+            }
+            inputs.push_back(uidToVariableMap.at(inputUid));
+        }
+
+        return std::shared_ptr<PrimitiveFunction>(new PrimitiveFunction(op, inputs, std::move(attributes), name, uid), 
+                                                  [](PrimitiveFunction* ptr) { delete ptr; });
+    }
+
+    static const std::wstring s_compositeFunctionTypeValue = L"CompositeFunction";
+
+    /*virtual*/ Dictionary CompositeFunction::Save() const
+    {
+        Dictionary dict;
+
+        dict[modelVersionKey] = modelVersion;
+        dict[typeKey] = s_compositeFunctionTypeValue;
+        dict[rootKey] = RootFunction()->Uid();
+        dict[nameKey] = Name();
+
+        auto inputs = Inputs();
+
+        // Find cycles in the graph and "break" them by inserting placeholders.
+        // This needs to be done on Save, since here we have easy access to the shape and 
+        // dynamic axis info.
+        std::unordered_set<FunctionPtr> visitedFunctions;
+        std::vector<FunctionPtr> topoSortedPrimitiveFuncitons;
+        Traverse([&visitedFunctions, &inputs, &topoSortedPrimitiveFuncitons](const FunctionPtr& function) {
+                    std::vector<Variable> functionInputs = function->Inputs();
+                    for (auto input : functionInputs)
+                    {
+                        if (input.IsOutput() && visitedFunctions.find(input.Owner()) != visitedFunctions.end())
+                        {
+                            auto varKind = VariableKind::Placeholder;
+                            Variable var(input.Shape(), varKind, input.GetDataType(), nullptr, 
+                                         input.IsSparse(), input.DynamicAxes(), input.Name(), input.Uid());
+                            inputs.push_back(var);
+                        }
+                        visitedFunctions.insert(function);
+                        topoSortedPrimitiveFuncitons.push_back(function);
+                    }
+                });
+
+        std::reverse(std::begin(topoSortedPrimitiveFuncitons), std::end(topoSortedPrimitiveFuncitons));
+
+        assert(topoSortedPrimitiveFuncitons.size() == m_allPrimitiveFunctions.size());
+        assert(topoSortedPrimitiveFuncitons.back()->Uid() == RootFunction()->Uid());
+        
+        std::vector<DictionaryValue> inputDictionaries(inputs.size());
+        std::unordered_set<std::wstring> inputUids;
+        for (const auto& input : inputs)
+        {
+            if (inputUids.find(input.Uid()) != inputUids.end())
+            {
+                LogicError("Input uids must be unique");
+            }
+            inputUids.insert(input.Uid());
+            inputDictionaries.push_back(input.Save());
+        }
+
+        dict[inputsKey] = std::move(inputDictionaries);
+       
+        std::vector<DictionaryValue>  functionDictionaries;
+        std::unordered_set<std::wstring> outputUids;
+        for (const auto& primitiveFunciton : topoSortedPrimitiveFuncitons)
+        {
+            for (const auto& output : primitiveFunciton->Outputs())
+            {
+                if (outputUids.find(output.Uid()) != outputUids.end())
+                {
+                    LogicError("Output uids of all primitive functions in a function graph must be unique");
+                }
+                outputUids.insert(primitiveFunciton->Uid());
+            }
+            functionDictionaries.push_back(primitiveFunciton->Save());
+        }
+
+        dict[functionsKey] = std::move(functionDictionaries);
+        
+        return dict;
+    }
+
+    /*static*/ FunctionPtr CompositeFunction::Load(const Dictionary& dict)
+    {
+        static const vector<std::wstring> s_requiredDictionaryKeys = { typeKey, rootKey, nameKey, inputsKey, functionsKey };
+       
+        size_t version = ValidateModelDictionary(dict, s_requiredDictionaryKeys, modelVersion);
+        
+        const auto& type = dict[typeKey].Value<std::wstring>();
+        if (type != s_compositeFunctionTypeValue) 
+        {
+            LogicError("Unexpected '%ls':'%ls' in place of 'type':'%ls' "
+                        "(%ls).", typeKey, type, typeKey, s_compositeFunctionTypeValue,
+                        GetModelVersionsString(modelVersion, version));
+        }
+
+        const auto& rootUid = dict[rootKey].Value<std::wstring>();
+        const auto& name = dict[nameKey].Value<std::wstring>();
+        const auto& inputs = dict[inputsKey].Value<vector<DictionaryValue>>();
+
+        std::unordered_map<std::wstring, Variable> uidToInputMap(inputs.size());
+
+        for (const auto& dictionaryValue : inputs)
+        {
+            const auto& dictionary = dictionaryValue.Value<Dictionary>();
+            const auto& inputVar = Variable::Load(dictionary);
+
+            if (uidToInputMap.find(inputVar.Uid()) != uidToInputMap.end())
+            {
+                LogicError("Input uids are not unique (several inputs share '%ls' uid) "
+                        "(%ls).", inputVar.Uid(), GetModelVersionsString(modelVersion, version));
+            }
+            uidToInputMap[inputVar.Uid()] = inputVar;
+        }
+
+        const auto& functions = dict[functionsKey].Value<vector<DictionaryValue>>();
+
+        FunctionPtr root;
+        std::unordered_map<Variable, Variable> placeholderReplacements;
+        std::unordered_set<FunctionPtr> allPrimitiveFunctions;
+        for (const auto& dictionaryValue : functions)
+        {
+            root = PrimitiveFunction::Load(dictionaryValue.Value<Dictionary>(), uidToInputMap);
+            allPrimitiveFunctions.insert(root);
+
+            for (const auto& output : root->Outputs())
+            {
+                const auto& it = uidToInputMap.find(output.Uid());
+                if (it != uidToInputMap.end())
+                {
+                    assert(it->second.IsPlaceholder());
+                    placeholderReplacements[it->second] = output;
+                }
+                uidToInputMap[output.Uid()] = output;
+            }
+        }
+
+        assert(root->Uid() == rootUid);
+
+        auto compositeFunction = CompositeFunction::Create(root, name);
+
+        if (placeholderReplacements.size() > 0)
+        {
+           return compositeFunction->ReplacePlaceholders(placeholderReplacements);
+        }
+
+        return compositeFunction;
     }
 
     // Names of the dynamic axes in the CNTK engine for some special sets of dynamic axes values
@@ -1030,7 +1292,7 @@ namespace CNTK
             break;
         }
         default:
-            LogicError("Specified op %s not yet supported", PrimitiveOpTypeName(op));
+            LogicError("Specified op %S not yet supported", PrimitiveOpTypeName(op));
             break;
         }
 
