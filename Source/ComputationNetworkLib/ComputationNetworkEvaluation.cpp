@@ -35,23 +35,12 @@ namespace Microsoft { namespace MSR { namespace CNTK {
 //  - these must be executed frame by frame (SEQuential) rather than as a map
 //  - such a loop is treated as if they were a little nested network; this is done inside SEQTraversalFlowControlNodes
 //  - these little nested networks are defined in the execution network in the form of nested sentinel nodes of type SEQTraversalFlowControlNode
-void ComputationNetwork::ForwardProp(const ComputationNodeBasePtr rootNode, const ComputationNodeBasePtr startNode, const ComputationNodeBasePtr endNode)
+void ComputationNetwork::ForwardProp(const ComputationNodeBasePtr rootNode)
 {
     VerifyIsCompiled("ForwardProp");
 
-    // traverse partial nodes as inputs
-    shared_ptr<FlowControlNode> network = dynamic_pointer_cast<FlowControlNode>(GetNestedNetwork(rootNode));
-    assert(network);
-
-    // Not sure how to deal with partial forward in SEQTraversalFlowControlNode
-    if (startNode || endNode) 
-    {
-        network->ForwardProp(FrameRange(nullptr), startNode, endNode);
-    }
-    else 
-    {
-        network->ForwardProp(FrameRange(nullptr));
-    }
+    // traverse all nodes in the pre-determined evaluation order
+    GetNestedNetwork(rootNode)->ForwardProp(FrameRange(nullptr));
 }
 
 // set the gradient matrix of a (root) node 1.0
@@ -140,18 +129,15 @@ ComputationNetwork::PARTraversalFlowControlNode::PARTraversalFlowControlNode(con
         }
     }
 }
-/*virtual*/ void ComputationNetwork::PARTraversalFlowControlNode::ForwardProp(const FrameRange& fr, const ComputationNodeBasePtr& startNode, const ComputationNodeBasePtr& endNode)
+/*virtual*/ void ComputationNetwork::PARTraversalFlowControlNode::ForwardProp(const FrameRange& fr) /*override*/
 {
-    // if start node is nullptr, forward will be enable
-    bool enableForward = startNode ? false : true;
-
     for (auto& node : m_nestedNodes)
     {
 #if 0
         if (dynamic_pointer_cast<LearnableParameter<float>>(node))
             dynamic_pointer_cast<ComputationNode<float>>(node)->DebugLogMinibatch();
 #endif
-        if (node->IsOutOfDateWrtInputs() && enableForward)
+        if (node->IsOutOfDateWrtInputs())
         {
             node->BeginForwardProp();
             node->ForwardProp(fr.WithLayout(node->GetMBLayout()));
@@ -159,16 +145,7 @@ ComputationNetwork::PARTraversalFlowControlNode::PARTraversalFlowControlNode(con
 
             node->BumpEvalTimeStamp();
         }
-
-        if (node == startNode)
-        {
-            enableForward = true;
-        }
-        else if (node == endNode)
-        {
-            break;
-        }
-}
+    }
 }
 /*virtual*/ void ComputationNetwork::PARTraversalFlowControlNode::Backprop(const FrameRange& fr, bool childrenInThisLoop, bool childrenInOuterLoop) /*override*/
 {

@@ -1587,15 +1587,15 @@ class BatchNormalizationNode : public ComputationNodeNonLooping<ElemType>, publi
 public:
     BatchNormalizationNode(DEVICEID_TYPE deviceId, const wstring& name) :
         Base(deviceId, name), m_spatial(false), m_normTimeConst(0), m_blendTimeConst(0), m_epsilon(0), m_useCntkEngine(true),
-        m_samplesSeen(0), m_imageLayoutKind(ImageLayoutKind::CHW), m_postBatchNormalization(false), m_swapNormTimeConst(0),
-        m_swapBlendTimeConst(0), m_convertRunningVariancePending(false)
+        m_samplesSeen(0), m_imageLayoutKind(ImageLayoutKind::CHW),
+        m_convertRunningVariancePending(false)
     {
     }
     BatchNormalizationNode(DEVICEID_TYPE deviceId, const wstring& name, bool spatial, double normalizationTimeConstant, double blendTimeConstant,
                            double epsilon, bool useCntkEngine, ImageLayoutKind imageLayoutKind) :
         Base(deviceId, name), m_spatial(spatial), m_normTimeConst(normalizationTimeConstant), m_blendTimeConst(blendTimeConstant),
-        m_epsilon(epsilon), m_useCntkEngine(useCntkEngine), m_imageLayoutKind(imageLayoutKind), m_samplesSeen(0), m_postBatchNormalization(false),
-        m_swapNormTimeConst(0), m_swapBlendTimeConst(0), m_convertRunningVariancePending(false)
+        m_epsilon(epsilon), m_useCntkEngine(useCntkEngine), m_imageLayoutKind(imageLayoutKind), m_samplesSeen(0),
+        m_convertRunningVariancePending(false)
     {
     }
     BatchNormalizationNode(const ScriptableObjects::IConfigRecordPtr configp) :
@@ -1605,9 +1605,6 @@ public:
                                ImageLayoutKindFrom(configp->Get(L"imageLayout")))
     {
         AttachInputsFromConfig(configp, this->GetExpectedNumInputs());
-        m_postBatchNormalization = false;
-        m_swapNormTimeConst = 0;
-        m_swapBlendTimeConst = 0;
     }
 
     void Save(File& fstream) const override
@@ -1724,7 +1721,7 @@ private: // time-constant conversions
     double ComputeExpAvgFactor() const
     {
         // in inference mode, only use long-term mean and do not update running estimates
-        if (!Environment().IsTraining() && !m_postBatchNormalization)
+        if (!Environment().IsTraining())
         {
             if (m_samplesSeen == 0)
                 RuntimeError("%ls: inference mode is used, but nothing has been trained.", NodeName().c_str());
@@ -1756,7 +1753,7 @@ private: // time-constant conversions
     double ComputeBlendFactor() const
     {
         // in inference mode, only use long-term mean and do not update running estimates
-        if (!Environment().IsTraining() && !m_postBatchNormalization)
+        if (!Environment().IsTraining())
         {
             if (m_samplesSeen == 0)
                 RuntimeError("%ls: inference mode is used, but nothing has been trained.", NodeName().c_str());
@@ -1805,7 +1802,7 @@ public:
         // In inference-only mode, m_savedMean and m_saveInvStdDev will not be
         // produced and BackpropToNonLooping() may not be called. In
         // non-inference (training) mode, saved statistics must be produced.
-        bool inferenceOnly = !Environment().IsTraining() && !m_postBatchNormalization;
+        bool inferenceOnly = !Environment().IsTraining();
         m_bnEng->Forward(/*in=*/ sliceInputValue, scale, bias,   // (in)
                          inferenceOnly, expAvgFactor, blendFactor,
                          runMean, runVariance,                   // (in/out) running estimates, updated from the current MB mean/variance
@@ -1870,14 +1867,6 @@ public:
     }
 
     virtual void EndForwardProp() override
-    {
-        if(m_postBatchNormalization)
-            m_samplesSeen += GetMBLayout()->GetActualNumSamples();
-
-        Base::EndForwardProp();
-    }
-
-    virtual void EndBackprop() override
     {
         // Update samples if not locked.
         double expAvgFactor = ComputeExpAvgFactor(); // weight for the new MB statistics in the running estimate. The previous value of the running statistics is kept with weight (1-this)
@@ -2019,33 +2008,20 @@ public:
         m_blendTimeConst = std::numeric_limits<double>::infinity();
     }
 
+    // ResetStatisticsState will set the batch normal statistics into initial state
+    // used for re-statistics the mean and variance of BN
+    // any others use may lead undependable results, please be careful
+    void ResetStatisiticsState()
+    {
+        m_samplesSeen = 0;
+        m_normTimeConst = 0;
+        m_blendTimeConst = 0;
+    }
     double NormalizationTimeConstant() const { return m_normTimeConst; }
     double BlendTimeConstant() const { return m_blendTimeConst; }
     bool Spatial() const { return m_spatial; }
     double Epsilon() const { return m_epsilon; }
     bool UseCNTKEngine() const { return m_useCntkEngine; }
-
-    // The function will reset the sample seen of current node and enable update mean and variance even in 
-    // inferring mode. By setting normTimeConst to -1 enable running average statistics. And by setting 
-    // blendTimeConst to 0 disable blending.
-    // Be caution: original mean and variance will be erase in later forward prop since samplesSeen has been 
-    // reset.
-    void SetPostBatchNormalizationBegin()
-    {
-        m_postBatchNormalization = true;
-        m_samplesSeen = 0;
-        m_swapNormTimeConst = m_normTimeConst;
-        m_swapBlendTimeConst = m_blendTimeConst;
-        m_normTimeConst = -1;
-        m_blendTimeConst = 0;
-    }
-    // The function will be called while the new mean and variance have been updated.
-    void SetPostBatchNormalizationEnd()
-    {
-        m_postBatchNormalization = false;
-        m_normTimeConst = m_swapNormTimeConst;
-        m_blendTimeConst = m_swapBlendTimeConst;
-    }
 
 private:
     // Old versioning - do not use. Do not remove until we're sure there are no old models around.
@@ -2110,12 +2086,6 @@ private:
 
     std::unique_ptr<BatchNormEngine<ElemType>> m_bnEng;
 
-    // By setting m_postBatchNormalization to true, it will still update the mean and variance in the environment of 
-    // NetworkOperationMode::Inferring. Used by PBN command, which will update the mean and variance in inferring mode.
-    bool m_postBatchNormalization;
-
-    double m_swapNormTimeConst;
-    double m_swapBlendTimeConst;
     bool m_convertRunningVariancePending;
 };
 

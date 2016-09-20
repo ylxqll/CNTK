@@ -885,8 +885,7 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
     {
         for (auto& evalNode : evaluationNodes) 
         {
-            shared_ptr<FlowControlNode> nestedNetwork = static_pointer_cast<FlowControlNode>(net->GetNestedNetwork(evalNode));
-            for (auto& node : nestedNetwork->GetNestedNodes()) 
+            for (auto& node : net->GetEvalOrder(evalNode)) 
             {
                 shared_ptr<BatchNormalizationNode<ElemType>> castNode =
                     dynamic_pointer_cast<BatchNormalizationNode<ElemType>>(node);

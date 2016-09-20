@@ -272,7 +272,7 @@ public:
     // 5. Consider the multi-GPU, we need to sync up the BN results between all the worker and average the value.
     void EvaluateBN(IDataReader* dataReader, const vector<wstring>& evalNodeNames, const wstring exportPath, const size_t mbSize, const int iters = 240, const size_t testSize = requestDataSize)
     {
-        ScopedNetworkOperationMode modeGuard(m_net, NetworkOperationMode::inferring);
+        ScopedNetworkOperationMode modeGuard(m_net, NetworkOperationMode::training);
 
         // determine nodes to evaluate
         std::vector<ComputationNodeBasePtr> evalNodes;
@@ -329,18 +329,26 @@ public:
 
         // Passing in two empty node lists so the dispatcher can work for the evalNodes.
         std::list<ComputationNodeBasePtr> learnableNodes;
-        std::vector<ComputationNodeBasePtr> criterionNodes;
 
-        // First, all batch normalization nodes should be marked.
+        // all batch normalization nodes should be marked and reset the mean and variance to initial state
         std::vector<ComputationNodeBasePtr> batchNormalNodes;
-        shared_ptr<FlowControlNode> nestedNetwork = static_pointer_cast<FlowControlNode>(m_net->GetNestedNetwork(evalNodes[0]));
-        for (auto& node : nestedNetwork->GetNestedNodes()) 
+        std::set<ComputationNodeBasePtr> batchNormalLogged; // (avoid double record of batch normalization nodes)
+        for (auto& evalNode : evalNodes)
         {
-            shared_ptr<BatchNormalizationNode<ElemType>> castNode =
-                dynamic_pointer_cast<BatchNormalizationNode<ElemType>>(node);
-            if (castNode) 
+            for (auto& node : m_net->GetEvalOrder(evalNode))
             {
-                batchNormalNodes.push_back(node);
+                shared_ptr<BatchNormalizationNode<ElemType>> batchNormalNode =
+                    dynamic_pointer_cast<BatchNormalizationNode<ElemType>>(node);
+                if (batchNormalNode)
+                {
+                    if (batchNormalLogged.insert(node).second)
+                    {
+                        batchNormalNode->ResetStatisiticsState();
+                        batchNormalNode->SetNormalizationTimeConstants(-1, batchNormalNode->NormalizationTimeConstant(),
+                            0, batchNormalNode->BlendTimeConstant());
+                        batchNormalNodes.push_back(node);
+                    }
+                }
             }
         }
 
@@ -350,12 +358,11 @@ public:
         bool noMoreSamplesToProcess = false;
         for (auto& node : batchNormalNodes) 
         {
-            shared_ptr<BatchNormalizationNode<ElemType>> batchNode =
+            shared_ptr<BatchNormalizationNode<ElemType>> batchNormalNode =
                 static_pointer_cast<BatchNormalizationNode<ElemType>>(node);
-            batchNode->SetPostBatchNormalizationBegin();
             size_t actualMBSize = 0;
 
-            LOGPRINTF(stderr, "Start evaluating: %ls\n", batchNode->GetName().c_str());
+            LOGPRINTF(stderr, "Start evaluating: %ls\n", batchNormalNode->GetName().c_str());
 
             // Post batch normal iters
             for (int iter = 0; iter < iters; iter++) 
@@ -374,10 +381,11 @@ public:
                 ComputationNetwork::BumpEvalTimeStamp(featureNodes);
                 ComputationNetwork::BumpEvalTimeStamp(labelNodes);
 
-                m_net->ForwardProp(evalNodes[0], nullptr, node);
+                m_net->ForwardProp(node);
                 dataReader->DataEnd();
             }
-            batchNode->SetPostBatchNormalizationEnd();
+
+            batchNormalNode->FreezeParameters();
 
             // Sync during or after all iters of a BN node are equivalent
             if (useParallelTrain) 

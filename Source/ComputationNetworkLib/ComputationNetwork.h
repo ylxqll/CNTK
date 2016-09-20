@@ -131,10 +131,7 @@ public:
     // -----------------------------------------------------------------------
 
     // main entry point for forward prop
-    // If pass the startNode non-null, the forward will not call forwardProp utill finding the startNode along rootNode eval order. 
-    // If pass the endNode non-null, the forward will exit after executing endNode forwardProp.
-    void ForwardProp(const ComputationNodeBasePtr rootNode, const ComputationNodeBasePtr startNode = nullptr,
-        const ComputationNodeBasePtr endNode = nullptr);
+    void ForwardProp(const ComputationNodeBasePtr rootNode);
 
     // main entry point for backprop
     void Backprop(const ComputationNodeBasePtr rootNode);
@@ -1017,7 +1014,7 @@ protected:
         virtual void BeginForwardProp() override
         {
         }
-        virtual void ForwardProp(const FrameRange&, const ComputationNodeBasePtr&, const ComputationNodeBasePtr&) override;
+        virtual void ForwardProp(const FrameRange&) override;
         virtual void EndForwardProp() override
         {
         }
