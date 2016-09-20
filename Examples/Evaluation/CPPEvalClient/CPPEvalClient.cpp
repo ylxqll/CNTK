@@ -107,5 +107,6 @@ int main(int argc, char* argv[])
         fprintf(stderr, "%f\n", value);
     }
 
+    fprintf(stderr, "Evaluation complete.\n");
     return 0;
 }
