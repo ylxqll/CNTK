@@ -61,7 +61,7 @@ opencv_check=include/opencv2/opencv.hpp
 
 have_libzip=no
 libzip_path=
-libzip_check=include/zip.h
+libzip_check=zip.h
 
 mathlib=
 
@@ -72,7 +72,7 @@ default_use_code_coverage=no
 enable_code_coverage=$default_use_code_coverage
 
 # List from best to worst choice
-default_path_list="/usr /usr/local /opt /opt/local"
+default_path_list="/usr /usr/local /usr/local/include /opt /opt/local"
 
 # List from best to worst choice
 default_mkls="CNTKCustomMKL"
